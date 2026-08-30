@@ -32,9 +32,10 @@ tests/                             Vitest suites (evidence 20, data 24, store 4)
 ## Run it
 
 ```bash
+git submodule update --init   # forge-std, needed by the contract tests
 npm install
-npm test                # 48 assertions, fully offline
-npm run test:contracts  # 22 assertions under Foundry
+npm test                      # 48 assertions, fully offline
+npm run test:contracts        # 22 assertions under Foundry
 ```
 
 The full app needs a chain, a database, and configuration:
