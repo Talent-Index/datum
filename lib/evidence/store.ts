@@ -16,6 +16,13 @@ export interface Queryable {
 export interface SeenHashStore {
   remember(projectId: string, phash: bigint, label: string): Promise<void>;
   duplicateOf(projectId: string, phash: bigint): Promise<string | null>;
+  /**
+   * Undo a remember. A submission is recorded when the checks pass, but the
+   * milestone is only really evidenced once the oracle's attestation lands;
+   * if that transaction fails the record has to come back out, or a
+   * transient chain error would burn those photographs permanently.
+   */
+  forget(projectId: string, phashes: bigint[]): Promise<void>;
 }
 
 export class MemorySeenHashStore implements SeenHashStore {
@@ -36,6 +43,11 @@ export class MemorySeenHashStore implements SeenHashStore {
     return null;
   }
 
+  async forget(projectId: string, phashes: bigint[]): Promise<void> {
+    const drop = new Set(phashes);
+    this.seen.set(projectId, (this.seen.get(projectId) ?? []).filter((e) => !drop.has(e.phash)));
+  }
+
   clear(): void {
     this.seen.clear();
   }
@@ -53,6 +65,14 @@ export class PostgresSeenHashStore implements SeenHashStore {
     await this.db.query(
       `insert into evidence_images (project_id, phash, label) values ($1, $2, $3)`,
       [projectId, phashToSigned(phash).toString(), label],
+    );
+  }
+
+  async forget(projectId: string, phashes: bigint[]): Promise<void> {
+    if (!phashes.length) return;
+    await this.db.query(
+      `delete from evidence_images where project_id = $1 and phash = any($2::bigint[])`,
+      [projectId, phashes.map((h) => phashToSigned(h).toString())],
     );
   }
 

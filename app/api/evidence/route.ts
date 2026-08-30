@@ -79,6 +79,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const dir = await mkdtemp(join(tmpdir(), "evidence-"));
   let verdict: Verdict;
+  let store: PostgresSeenHashStore | null = null;
   try {
     const paths: string[] = [];
     for (const file of files) {
@@ -95,7 +96,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     const classifier =
       process.env.STAGE_CLASSIFIER === "sidecar" ? new SidecarClassifier() : new VlmClassifier();
-    const verifier = new EvidenceVerifier(classifier, new PostgresSeenHashStore(dbPool()));
+    store = new PostgresSeenHashStore(dbPool());
+    const verifier = new EvidenceVerifier(classifier, store);
     verdict = await verifier.verify(
       { projectId: PROJECT_ID, name: SITE_NAME, latitude: SITE_LAT, longitude: SITE_LON },
       milestoneId,
@@ -121,6 +123,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       await publicClient().waitForTransactionReceipt({ hash });
       txHash = hash;
     } catch (error) {
+      // The photographs were recorded as seen when the checks passed, but
+      // without an attestation this milestone has no evidence on chain.
+      // Release the hashes so the same photographs can be resubmitted once
+      // the cause is fixed, rather than being rejected as duplicates forever.
+      await store?.forget(
+        PROJECT_ID,
+        verdict.images.filter((i) => i.passed).map((i) => BigInt(`0x${i.phash}`)),
+      );
       return NextResponse.json(
         { error: `Evidence accepted but the oracle attestation failed: ${revertReason(error)}` },
         { status: 502 },
