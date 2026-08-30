@@ -1,0 +1,7 @@
+web3[tester]>=7.0
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
+pillow>=10.0
+imagehash>=4.3
+piexif>=1.1.3

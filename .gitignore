@@ -1,0 +1,34 @@
+# Dependencies and build output
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Python (reference implementation, removed at end of port)
+__pycache__/
+*.pyc
+.venv*/
+
+# Foundry
+contracts/cache/
+contracts/out/
+contracts/broadcast/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Local data
+*.local
+.drizzle/
+
+# Editor and tool metadata
+.vscode/
+.idea/
+CLAUDE.md
+.cursorrules
+.aider*
+.cursor/
+.specstory/
