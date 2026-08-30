@@ -1,0 +1,206 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+
+import {
+  SITE_LAT,
+  SITE_LON,
+  buildDemoSet,
+  makePhoto,
+  type DemoSet,
+} from "@/lib/evidence/fixtures";
+import {
+  EvidenceVerifier,
+  bundleHash,
+  type ImageFinding,
+  type Site,
+  type Verdict,
+} from "@/lib/evidence/verifier";
+
+/**
+ * Ported from tests/test_evidence.py — same 17 assertions in the same order.
+ * Each case is a fraud pattern a developer under cashflow pressure actually
+ * tries. If the pipeline cannot catch these, the escrow releases on bad
+ * evidence and the whole product is theatre.
+ *
+ * The reference ran cases sequentially against one verifier whose seen-hash
+ * state carried across cases; these tests keep that ordering dependency
+ * explicit by running the full sequence in a beforeAll and asserting on the
+ * collected verdicts.
+ */
+
+const NOW = new Date(2026, 7, 30, 11, 0, 0);
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const site: Site = {
+  projectId: "willow-park-a",
+  name: "Willow Park Block A, Kilimani",
+  latitude: SITE_LAT,
+  longitude: SITE_LON,
+};
+
+let root: string;
+let sets: DemoSet;
+let good: Verdict;
+let recycled: Verdict;
+let elsewhere: Verdict;
+let stripped: Verdict;
+let mismatch: Verdict;
+let old: Verdict;
+let nxt: Verdict;
+let thin: Verdict;
+
+beforeAll(async () => {
+  root = await mkdtemp(join(tmpdir(), "evidence-"));
+  sets = await buildDemoSet(root, NOW);
+  const v = new EvidenceVerifier();
+
+  good = await v.verify(site, 0, "foundation", sets.honest, NOW);
+  recycled = await v.verify(site, 1, "foundation", sets.recycled, NOW);
+  elsewhere = await v.verify(site, 1, "foundation", sets.wrong_site, NOW);
+  stripped = await v.verify(site, 1, "foundation", sets.no_gps, NOW);
+
+  const wrongStage = await Promise.all(
+    [0, 1, 2].map((i) =>
+      makePhoto(join(root, `slab_${i}.jpg`), "ground_slab", new Date(NOW.getTime() - DAY_MS), SITE_LAT, SITE_LON, 200 + i),
+    ),
+  );
+  mismatch = await v.verify(site, 1, "roofing", wrongStage, NOW);
+
+  const stale = await Promise.all(
+    [0, 1, 2].map((i) =>
+      makePhoto(join(root, `old_${i}.jpg`), "ground_slab", new Date(NOW.getTime() - 120 * DAY_MS), SITE_LAT, SITE_LON, 300 + i),
+    ),
+  );
+  old = await v.verify(site, 1, "ground_slab", stale, NOW);
+
+  const progressed = await Promise.all(
+    [0, 1, 2].map((i) =>
+      makePhoto(join(root, `prog_${i}.jpg`), "ground_slab", new Date(NOW.getTime() - DAY_MS), SITE_LAT, SITE_LON, 400 + i),
+    ),
+  );
+  nxt = await v.verify(site, 1, "ground_slab", progressed, NOW);
+  thin = await v.verify(site, 2, "ground_slab", progressed.slice(0, 1), NOW);
+});
+
+afterAll(async () => {
+  await rm(root, { recursive: true, force: true });
+});
+
+describe("honest submission", () => {
+  it("accepted", () => {
+    expect(good.accepted).toBe(true);
+  });
+  it("all three images clean", () => {
+    expect(good.images.filter((i) => i.passed).length).toBe(3);
+  });
+  it("evidence hash produced", () => {
+    expect(good.evidenceHash.startsWith("0x")).toBe(true);
+  });
+});
+
+describe("same photographs resubmitted for the next milestone", () => {
+  it("rejected", () => {
+    expect(recycled.accepted).toBe(false);
+  });
+  it("novelty check failed", () => {
+    expect(recycled.images.every((i) => !i.checks.novelty)).toBe(true);
+  });
+  it("reason names the earlier milestone", () => {
+    expect(recycled.summary).toContain("already submitted");
+  });
+});
+
+describe("photographs from a different site", () => {
+  it("rejected", () => {
+    expect(elsewhere.accepted).toBe(false);
+  });
+  it("location check failed", () => {
+    expect(elsewhere.images.every((i) => !i.checks.location)).toBe(true);
+  });
+});
+
+describe("location metadata stripped", () => {
+  it("rejected", () => {
+    expect(stripped.accepted).toBe(false);
+  });
+  it("missing GPS reported", () => {
+    expect(stripped.images[0]!.notes.join(" ")).toContain("No GPS data");
+  });
+});
+
+describe("wrong construction stage for the milestone claimed", () => {
+  it("rejected", () => {
+    expect(mismatch.accepted).toBe(false);
+  });
+  it("stage check failed", () => {
+    expect(mismatch.images.every((i) => !i.checks.stage)).toBe(true);
+  });
+});
+
+describe("stale photographs presented as current", () => {
+  it("rejected", () => {
+    expect(old.accepted).toBe(false);
+  });
+  it("recency check failed", () => {
+    expect(old.images.every((i) => !i.checks.recency)).toBe(true);
+  });
+});
+
+describe("genuine progress to the next stage", () => {
+  it("accepted", () => {
+    expect(nxt.accepted).toBe(true);
+  });
+  it("hash differs from milestone 0", () => {
+    expect(nxt.evidenceHash).not.toBe(good.evidenceHash);
+  });
+});
+
+describe("too few clean images", () => {
+  it("rejected below the minimum", () => {
+    expect(thin.accepted).toBe(false);
+  });
+});
+
+describe("bundle hash", () => {
+  // Generated by the Python reference implementation for this exact input.
+  // The hash goes on chain, so both implementations must agree byte for byte.
+  const vectorSite: Site = {
+    projectId: "willow-park-a",
+    name: "Willow Park Block A, Kilimani",
+    latitude: -1.2921,
+    longitude: 36.7827,
+  };
+  const vectorFindings: ImageFinding[] = [
+    { filename: "b.jpg", sha256: "beef".repeat(16), phash: "a1f887934c2f7878", passed: true, checks: {}, notes: [], failures: [] },
+    { filename: "a.jpg", sha256: "cafe".repeat(16), phash: "d9e09ec7fe182324", passed: false, checks: {}, notes: [], failures: [] },
+  ];
+
+  it("matches the reference implementation on a fixed input", () => {
+    expect(bundleHash(vectorSite, 3, "roofing", vectorFindings)).toBe(
+      "0x0e1d7b344ae6df563ab8e1a22a89daf30634f4958e4bdc31d7e23d48e8c59dde",
+    );
+  });
+
+  it("is stable across runs and changes when any input changes", () => {
+    const first = bundleHash(vectorSite, 3, "roofing", vectorFindings);
+    const second = bundleHash(vectorSite, 3, "roofing", vectorFindings);
+    expect(second).toBe(first);
+
+    expect(bundleHash(vectorSite, 4, "roofing", vectorFindings)).not.toBe(first);
+    expect(bundleHash(vectorSite, 3, "finishing", vectorFindings)).not.toBe(first);
+    expect(
+      bundleHash({ ...vectorSite, latitude: -1.2922 }, 3, "roofing", vectorFindings),
+    ).not.toBe(first);
+    const flipped = vectorFindings.map((f, i) => (i === 0 ? { ...f, passed: false } : f));
+    expect(bundleHash(vectorSite, 3, "roofing", flipped)).not.toBe(first);
+  });
+
+  it("is order-independent over images", () => {
+    const reversed = [...vectorFindings].reverse();
+    expect(bundleHash(vectorSite, 3, "roofing", reversed)).toBe(
+      bundleHash(vectorSite, 3, "roofing", vectorFindings),
+    );
+  });
+});
