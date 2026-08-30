@@ -1,7 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import sharp from "sharp";
-import piexif, { type IExif, type IExifElement, TagValues } from "piexif-ts";
+import { dump, insert, load, TagValues, type IExif, type IExifElement } from "piexif-ts";
 
 /**
  * Synthetic site photographs with real EXIF GPS and timestamps.
@@ -78,11 +78,11 @@ function buildExif(capturedAt: Date, lat: number, lon: number): string {
     [TagValues.GPSIFD.GPSLongitude]: degToDmsRational(lon),
   };
   const exifObj: IExif = { "0th": zeroth, Exif: exif, GPS: gps };
-  return piexif.dump(exifObj);
+  return dump(exifObj);
 }
 
 function insertExif(jpeg: Buffer, exifStr: string): Buffer {
-  const withExif = piexif.insert(exifStr, jpeg.toString("binary"));
+  const withExif = insert(exifStr, jpeg.toString("binary"));
   return Buffer.from(withExif, "binary");
 }
 
@@ -173,14 +173,14 @@ export async function relabelTimestamp(
   capturedAt: Date,
 ): Promise<string> {
   const source = await readFile(src);
-  const exifObj = piexif.load(source.toString("binary"));
+  const exifObj = load(source.toString("binary"));
   const stamp = exifTimestamp(capturedAt);
   exifObj["0th"] = { ...exifObj["0th"], [TagValues.ImageIFD.DateTime]: stamp };
   exifObj.Exif = { ...exifObj.Exif, [TagValues.ExifIFD.DateTimeOriginal]: stamp };
 
   const jpeg = await sharp(source).jpeg({ quality: 90 }).toBuffer();
   await mkdir(dirname(dst), { recursive: true });
-  await writeFile(dst, insertExif(jpeg, piexif.dump(exifObj)));
+  await writeFile(dst, insertExif(jpeg, dump(exifObj)));
   await copySidecar(src, dst);
   return dst;
 }
