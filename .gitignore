@@ -32,3 +32,9 @@ CLAUDE.md
 .aider*
 .cursor/
 .specstory/
+.vercel
+
+# Agent and editor metadata
+.agents/
+.claude/
+skills-lock.json
