@@ -1,12 +1,13 @@
 import { readFile } from "node:fs/promises";
+import sharp from "sharp";
 import { z } from "zod";
 
 /**
  * Stage classification behind one swappable interface.
  *
  * Production options, in order of effort:
- *   - Vision-language model with a constrained JSON response (implemented,
- *     the default)
+ *   - Vision-language model with a constrained JSON response. Two are
+ *     implemented: NVIDIA-hosted open models (the default) and Anthropic.
  *   - Fine-tuned classifier exported to ONNX once you have labelled sites.
  *     The seam is this interface: implement classify() against
  *     onnxruntime-web or a dedicated inference service and swap it in where
@@ -36,7 +37,39 @@ export interface StageClassifier {
   classify(imagePath: string): Promise<StageClassification>;
 }
 
+const vlmResponseSchema = z.object({
+  stage: z.enum([...STAGES, "unknown"]),
+  confidence: z.number().min(0).max(1),
+});
+
 const UNKNOWN: StageClassification = { stage: "unknown", confidence: 0 };
+
+/**
+ * One prompt for every model backend, so a change of provider cannot quietly
+ * change what the classifier was asked.
+ */
+const STAGE_PROMPT =
+  "This is a photograph of a building construction site in Kenya. " +
+  "Classify the visible construction stage as exactly one of: " +
+  `${STAGES.join(", ")}. ` +
+  "The stages occur in that order on site. If no construction is visible or " +
+  'the stage cannot be determined, use "unknown". ' +
+  'Respond with only a JSON object: {"stage": "<one of the listed values>", ' +
+  '"confidence": <number between 0 and 1>}';
+
+/** Read the model's JSON reply, tolerating prose or code fences around it. */
+function readStage(text: string): StageClassification {
+  const json = text.match(/\{[\s\S]*\}/);
+  if (!json) return UNKNOWN;
+  let value: unknown;
+  try {
+    value = JSON.parse(json[0]);
+  } catch {
+    return UNKNOWN;
+  }
+  const parsed = vlmResponseSchema.safeParse(value);
+  return parsed.success ? parsed.data : UNKNOWN;
+}
 
 export class SidecarClassifier implements StageClassifier {
   async classify(imagePath: string): Promise<StageClassification> {
@@ -53,11 +86,6 @@ export class SidecarClassifier implements StageClassifier {
     return { stage, confidence: Number.isFinite(confidence) ? confidence : 0.9 };
   }
 }
-
-const vlmResponseSchema = z.object({
-  stage: z.enum([...STAGES, "unknown"]),
-  confidence: z.number().min(0).max(1),
-});
 
 const messageResponseSchema = z.object({
   stop_reason: z.string().nullish(),
@@ -123,16 +151,7 @@ export class VlmClassifier implements StageClassifier {
                   data: image.toString("base64"),
                 },
               },
-              {
-                type: "text",
-                text:
-                  "This is a photograph of a building construction site in Kenya. " +
-                  "Classify the visible construction stage as exactly one of: " +
-                  `${STAGES.join(", ")}. ` +
-                  "The stages occur in that order on site. If no construction is " +
-                  'visible or the stage cannot be determined, use "unknown". ' +
-                  "Give your confidence between 0 and 1.",
-              },
+              { type: "text", text: STAGE_PROMPT },
             ],
           },
         ],
@@ -152,10 +171,115 @@ export class VlmClassifier implements StageClassifier {
     const text = message.content.find(
       (block: { type: string; text?: string }) => block.type === "text",
     )?.text;
-    if (!text) return UNKNOWN;
+    return text ? readStage(text) : UNKNOWN;
+  }
+}
 
-    const parsed = vlmResponseSchema.safeParse(JSON.parse(text));
-    if (!parsed.success) return UNKNOWN;
-    return parsed.data;
+const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions";
+
+// NVIDIA rejects inline images much above 180KB, so frames are downscaled
+// before they are sent. Site photographs off a phone are routinely 3-8MB.
+const MAX_INLINE_BYTES = 140_000;
+
+const nvidiaResponseSchema = z.object({
+  choices: z
+    .array(z.object({ message: z.object({ content: z.string().nullish() }).nullish() }))
+    .default([]),
+});
+
+/**
+ * NVIDIA-hosted vision model over their OpenAI-compatible endpoint.
+ *
+ * The 11B Llama vision model is the default because the hosted endpoint's
+ * latency is wildly variable — measured between 2 and 157 seconds for the
+ * same work — and a serverless function has tens of seconds to live. 11B
+ * answers in about two seconds and is decisive on a clear photograph of one
+ * stage; it returns "unknown" on cluttered or ambiguous frames rather than
+ * guessing. The 90B model commits on those harder frames and is worth
+ * setting NVIDIA_MODEL to when latency is not the constraint.
+ */
+export class NvidiaClassifier implements StageClassifier {
+  constructor(
+    private readonly apiKey: string = process.env.NVIDIA_API_KEY ?? process.env.NVIDIA_KEY ?? "",
+    private readonly model: string = process.env.NVIDIA_MODEL ??
+      "meta/llama-3.2-11b-vision-instruct",
+    private readonly timeoutMs: number = Number(process.env.STAGE_TIMEOUT_MS ?? 40_000),
+  ) {}
+
+  private async encode(imagePath: string): Promise<string> {
+    let quality = 80;
+    let buffer = await sharp(imagePath)
+      .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+      .jpeg({ quality })
+      .toBuffer();
+    while (buffer.length > MAX_INLINE_BYTES && quality > 30) {
+      quality -= 15;
+      buffer = await sharp(imagePath)
+        .resize(1024, 1024, { fit: "inside", withoutEnlargement: true })
+        .jpeg({ quality })
+        .toBuffer();
+    }
+    return buffer.toString("base64");
+  }
+
+  async classify(imagePath: string): Promise<StageClassification> {
+    if (!this.apiKey) {
+      throw new Error(
+        "NVIDIA_API_KEY is not set; set it, or set STAGE_CLASSIFIER=sidecar for offline use",
+      );
+    }
+    const image = await this.encode(imagePath);
+
+    // The endpoint occasionally stalls for minutes. Cap each call so one slow
+    // frame degrades to "stage could not be determined" — a visible, honest
+    // rejection — instead of taking the whole submission down with it.
+    const abort = AbortSignal.timeout(this.timeoutMs);
+    let response: Response;
+    try {
+      response = await fetch(NVIDIA_API, {
+      method: "POST",
+      signal: abort,
+      headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
+      body: JSON.stringify({
+        model: this.model,
+        max_tokens: 128,
+        temperature: 0,
+        messages: [
+          {
+            role: "user",
+            content: [
+              { type: "text", text: STAGE_PROMPT },
+              { type: "image_url", image_url: { url: `data:image/jpeg;base64,${image}` } },
+            ],
+          },
+        ],
+      }),
+      });
+    } catch {
+      return UNKNOWN;
+    }
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(
+        `Stage classification request failed with HTTP ${response.status}: ${body.slice(0, 300)}`,
+      );
+    }
+
+    const parsed = nvidiaResponseSchema.safeParse(await response.json());
+    const text = parsed.success ? parsed.data.choices[0]?.message?.content : null;
+    return text ? readStage(text) : UNKNOWN;
+  }
+}
+
+/** Pick the backend named by STAGE_CLASSIFIER. */
+export function stageClassifier(): StageClassifier {
+  switch (process.env.STAGE_CLASSIFIER) {
+    case "sidecar":
+      return new SidecarClassifier();
+    case "anthropic":
+      return new VlmClassifier();
+    default:
+      return new NvidiaClassifier();
   }
 }

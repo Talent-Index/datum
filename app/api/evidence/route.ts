@@ -12,7 +12,7 @@ import {
   revertReason,
 } from "@/lib/chain";
 import { db, dbPool, schema } from "@/lib/db";
-import { SidecarClassifier, VlmClassifier } from "@/lib/evidence/classifier";
+import { stageClassifier } from "@/lib/evidence/classifier";
 import { PostgresSeenHashStore } from "@/lib/evidence/store";
 import { EvidenceVerifier, type Verdict } from "@/lib/evidence/verifier";
 import {
@@ -33,6 +33,10 @@ import {
 // Rejected on the Content-Length header before any parsing: a 40MB drone
 // still would exhaust function memory before a single check runs.
 const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
+
+// Hosted vision classification runs tens of seconds per image, in parallel
+// across the submission. The platform default of ten seconds cuts it off.
+export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<NextResponse> {
   const contentLength = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
@@ -94,10 +98,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
     }
 
-    const classifier =
-      process.env.STAGE_CLASSIFIER === "sidecar" ? new SidecarClassifier() : new VlmClassifier();
     store = new PostgresSeenHashStore(dbPool());
-    const verifier = new EvidenceVerifier(classifier, store);
+    const verifier = new EvidenceVerifier(stageClassifier(), store);
     verdict = await verifier.verify(
       { projectId: PROJECT_ID, name: SITE_NAME, latitude: SITE_LAT, longitude: SITE_LON },
       milestoneId,

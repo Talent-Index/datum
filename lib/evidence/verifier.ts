@@ -89,7 +89,12 @@ export class EvidenceVerifier {
     const findings: ImageFinding[] = [];
     const hashes: bigint[] = [];
 
-    for (const path of paths) {
+    // Classify every frame concurrently. A hosted vision model takes tens of
+    // seconds per image, and a submission is three or more; run serially and
+    // the request outlives the platform's function timeout.
+    const classifications = await Promise.all(paths.map((p) => this.classifier.classify(p)));
+
+    for (const [index, path] of paths.entries()) {
       const data = await readFile(path);
       const sha = createHash("sha256").update(data).digest("hex");
       const hash = await phash(data);
@@ -139,7 +144,7 @@ export class EvidenceVerifier {
       }
 
       // 4. Stage
-      const { stage, confidence } = await this.classifier.classify(path);
+      const { stage, confidence } = classifications[index]!;
       checks.stage = stage === claimedStage && confidence >= 0.6;
       if (stage === "unknown") {
         notes.push("Stage could not be determined");
