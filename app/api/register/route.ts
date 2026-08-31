@@ -37,7 +37,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const address = buyerAccount(phone).address;
 
   const existing = await database
-    .select({ id: schema.buyers.id })
+    .select({ id: schema.buyers.id, walletAddress: schema.buyers.walletAddress })
     .from(schema.buyers)
     .where(eq(schema.buyers.phone, phone));
 
@@ -57,10 +57,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  // Report the wallet the buyer's money is actually in. A returning buyer
+  // keeps the address their earlier instalments were paid to.
   return NextResponse.json({
     ok: true,
     phone,
-    address,
+    address: existing[0]?.walletAddress ?? address,
     commitmentKes,
     message:
       `${phone} registered for ${SITE_NAME} with a commitment of ` +
