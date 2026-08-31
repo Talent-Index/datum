@@ -110,6 +110,7 @@ export default function Console() {
   const [amount, setAmount] = useState("500000");
   const [regPhone, setRegPhone] = useState("0722114050");
   const [commitment, setCommitment] = useState("2000000");
+  const [activeBuyer, setActiveBuyer] = useState<string | null>(null);
   const [developer, setDeveloper] = useState(DEVELOPERS[0]!);
   const filesRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -158,7 +159,7 @@ export default function Console() {
   const deposit = () =>
     act("deposit", async () => {
       const result = await call("/api/deposit", {
-        phone: phone.trim(),
+        phone: (activeBuyer ?? phone).trim(),
         kes: Number.parseInt(amount, 10),
       });
       showToast(String(result.sms ?? "Payment request sent."));
@@ -189,6 +190,7 @@ export default function Console() {
         phone: regPhone.trim(),
         commitmentKes: Number.parseInt(commitment, 10),
       });
+      setActiveBuyer(result.phone as string);
       setPhone(result.phone as string);
       showToast(result.message as string);
     });
@@ -231,6 +233,15 @@ export default function Console() {
 
   const over = state ? state.status !== "Active" : true;
   const current = state?.milestones.find((m) => m.current);
+  // 0722… and 254722… are the same person; match the ledger either way.
+  const asMsisdn = (raw: string) => {
+    const digits = raw.replace(/\D/g, "");
+    return digits.startsWith("254") ? digits : `254${digits.replace(/^0/, "")}`;
+  };
+  const buyerKey = activeBuyer ?? (regPhone.trim() ? asMsisdn(regPhone) : null);
+  const myBuyer = buyerKey
+    ? (state?.buyers.find((b) => asMsisdn(b.phone) === buyerKey) ?? null)
+    : null;
 
   return (
     <div className="wrap">
@@ -381,60 +392,96 @@ export default function Console() {
                 </div>
               </div>
               <button onClick={registerBuyer} disabled={over || busy !== null}>
-                Register commitment
+                {busy === "register" ? "Registering…" : "Register commitment"}
               </button>
+              {!myBuyer && (
+                <p className="hint">
+                  Once registered, an instalment panel appears below for this number.
+                </p>
+              )}
             </div>
           </section>
 
-          <section className="panel">
-            <h2>
-              <span>2 — Buyer deposit</span>
-              <span>M-Pesa</span>
-            </h2>
-            <div className="body">
-              <p>
-                An instalment against the commitment. The money lands in escrow, not in the
-                developer&apos;s operating account.
-              </p>
-              {state && state.funding_target > 0 && (
+          {myBuyer && (
+            <section className="panel">
+              <h2>
+                <span>2 — Pay in instalments</span>
+                <span>{myBuyer.phone}</span>
+              </h2>
+              <div className="body">
+                <p>
+                  Each instalment is an M-Pesa prompt to the number that committed. The money is
+                  held in escrow and released only against verified construction.
+                </p>
+
                 <div className="target">
                   <div className="target-head">
-                    <span>Developer&apos;s funding target</span>
+                    <span>Your commitment</span>
                     <b>
-                      {kes(state.total_deposited)} of {kes(state.funding_target)}
+                      {kes(myBuyer.contributed)} of {kes(myBuyer.commitment ?? 0)}
                     </b>
                   </div>
                   <div className="bar">
                     <div
                       className="fill"
                       style={{
-                        width: `${Math.min(100, (state.total_deposited / state.funding_target) * 100)}%`,
+                        width: `${
+                          myBuyer.commitment
+                            ? Math.min(100, (myBuyer.contributed / myBuyer.commitment) * 100)
+                            : 0
+                        }%`,
                       }}
                     />
                   </div>
+                  <div className="target-foot">
+                    {myBuyer.commitment && myBuyer.contributed >= myBuyer.commitment ? (
+                      <span className="done">Commitment met in full</span>
+                    ) : (
+                      <span>
+                        {kes(Math.max(0, (myBuyer.commitment ?? 0) - myBuyer.contributed))} still to
+                        pay
+                      </span>
+                    )}
+                    <span>
+                      {kes(myBuyer.still_held)} protected · {kes(myBuyer.released)} released against
+                      verified work
+                    </span>
+                  </div>
                 </div>
-              )}
-              <div className="row">
-                <div>
-                  <label htmlFor="phone">Phone</label>
-                  <input id="phone" value={phone} onChange={(e) => setPhone(e.target.value)} />
-                </div>
-                <div>
-                  <label htmlFor="amount">Amount (KES)</label>
-                  <input
-                    id="amount"
-                    type="number"
-                    step={50000}
-                    value={amount}
-                    onChange={(e) => setAmount(e.target.value)}
-                  />
-                </div>
+
+                <label htmlFor="amount">Instalment (KES)</label>
+                <input
+                  id="amount"
+                  type="number"
+                  step={10000}
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                />
+                <button onClick={deposit} disabled={over || busy !== null}>
+                  {busy === "deposit" ? "Sending prompt…" : "Send M-Pesa prompt"}
+                </button>
+
+                {state && state.funding_target > 0 && (
+                  <div className="target site-target">
+                    <div className="target-head">
+                      <span>Development funded</span>
+                      <b>
+                        {kes(state.total_deposited)} of {kes(state.funding_target)}
+                      </b>
+                    </div>
+                    <div className="bar">
+                      <div
+                        className="fill"
+                        style={{
+                          width: `${Math.min(100, (state.total_deposited / state.funding_target) * 100)}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
-              <button onClick={deposit} disabled={over || busy !== null}>
-                Send payment request
-              </button>
-            </div>
-          </section>
+            </section>
+          )}
 
           <section className="panel">
             <h2>

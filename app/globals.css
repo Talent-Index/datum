@@ -267,3 +267,31 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--rule);
     transition: none;
   }
 }
+
+/* ── commitment progress ─────────────────────────────────── */
+.target-foot {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.target-foot .done {
+  color: var(--verified);
+}
+.site-target {
+  margin: 15px 0 0;
+  padding-top: 13px;
+  border-top: 1px solid var(--rule-soft);
+}
+.hint {
+  margin: 9px 0 0;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  line-height: 1.5;
+  color: var(--muted);
+}
