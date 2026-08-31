@@ -1,6 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
+import { useRef, useState } from "react";
+
+import { call, kes, useProject, type Verdict } from "@/lib/ui/project";
 
 /**
  * The drawdown register: the same document a bank and a quantity surveyor
@@ -9,68 +12,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * information architecture; the evidence panel takes real uploads instead
  * of canned scenarios.
  */
-
-interface Milestone {
-  id: number;
-  description: string;
-  stage: string;
-  percent: number;
-  cumulative: number;
-  evidence_hash: string | null;
-  approvals: number;
-  released: boolean;
-  signers: string[];
-  current: boolean;
-}
-
-interface Buyer {
-  phone: string;
-  address: string;
-  contributed: number;
-  released: number;
-  still_held: number;
-  commitment: number | null;
-  refunded: boolean;
-}
-
-interface VerdictImage {
-  thumbnail?: string | null;
-  filename: string;
-  checks: Record<string, boolean>;
-  notes: string[];
-}
-
-interface Verdict {
-  accepted: boolean;
-  summary: string;
-  evidence_hash: string;
-  images: VerdictImage[];
-}
-
-interface Corroboration {
-  developer?: string;
-  verdict: string;
-  corroborating: string[];
-  findings: string[];
-  unavailable: string[];
-}
-
-interface ProjectState {
-  site: string;
-  status: "Active" | "Stalled" | "Completed";
-  total_deposited: number;
-  total_released: number;
-  held: number;
-  developer_received: number;
-  next_milestone: number;
-  milestones: Milestone[];
-  buyers: Buyer[];
-  last_verdict: Verdict | null;
-  corroboration: Corroboration | null;
-  developer_name: string;
-  funding_target: number;
-  contract: string;
-}
 
 const CHECK_LABELS: Record<string, string> = {
   location: "location",
@@ -86,84 +27,10 @@ const DEVELOPERS = [
   "Backstreet Homes Ltd",
 ];
 
-const kes = (n: number) => `KES ${n.toLocaleString("en-US")}`;
-
-async function call(path: string, body?: unknown): Promise<Record<string, unknown>> {
-  const response = await fetch(path, {
-    method: "POST",
-    headers: body instanceof FormData ? {} : { "Content-Type": "application/json" },
-    body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
-  });
-  const data = (await response.json()) as Record<string, unknown>;
-  if (!response.ok) {
-    throw new Error(typeof data.error === "string" ? data.error : "Request failed");
-  }
-  return data;
-}
-
 export default function Console() {
-  const [state, setState] = useState<ProjectState | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ text: string; err: boolean } | null>(null);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [phone, setPhone] = useState("0722114050");
-  const [amount, setAmount] = useState("500000");
-  const [regPhone, setRegPhone] = useState("0722114050");
-  const [commitment, setCommitment] = useState("2000000");
-  const [activeBuyer, setActiveBuyer] = useState<string | null>(null);
+  const { state, loadError, toast, busy, showToast, act } = useProject();
   const [developer, setDeveloper] = useState(DEVELOPERS[0]!);
   const filesRef = useRef<HTMLInputElement>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showToast = useCallback((text: string, err = false) => {
-    setToast({ text, err });
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    toastTimer.current = setTimeout(() => setToast(null), 7000);
-  }, []);
-
-  const refresh = useCallback(async () => {
-    try {
-      const response = await fetch("/api/state", { cache: "no-store" });
-      const data = (await response.json()) as ProjectState & { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "State unavailable");
-      setState(data);
-      setLoadError(null);
-    } catch (error) {
-      setLoadError(error instanceof Error ? error.message : "State unavailable");
-    }
-  }, []);
-
-  useEffect(() => {
-    void refresh();
-    const interval = setInterval(() => void refresh(), 5000);
-    return () => clearInterval(interval);
-  }, [refresh]);
-
-  const act = useCallback(
-    (name: string, fn: () => Promise<void>) => {
-      void (async () => {
-        setBusy(name);
-        try {
-          await fn();
-        } catch (error) {
-          showToast(error instanceof Error ? error.message : "Request failed", true);
-        } finally {
-          setBusy(null);
-          await refresh();
-        }
-      })();
-    },
-    [refresh, showToast],
-  );
-
-  const deposit = () =>
-    act("deposit", async () => {
-      const result = await call("/api/deposit", {
-        phone: (activeBuyer ?? phone).trim(),
-        kes: Number.parseInt(amount, 10),
-      });
-      showToast(String(result.sms ?? "Payment request sent."));
-    });
 
   const submitEvidence = () =>
     act("evidence", async () => {
@@ -182,17 +49,6 @@ export default function Console() {
         !verdict.accepted,
       );
       if (filesRef.current) filesRef.current.value = "";
-    });
-
-  const registerBuyer = () =>
-    act("register", async () => {
-      const result = await call("/api/register", {
-        phone: regPhone.trim(),
-        commitmentKes: Number.parseInt(commitment, 10),
-      });
-      setActiveBuyer(result.phone as string);
-      setPhone(result.phone as string);
-      showToast(result.message as string);
     });
 
   const corroborateNow = () =>
@@ -233,16 +89,6 @@ export default function Console() {
 
   const over = state ? state.status !== "Active" : true;
   const current = state?.milestones.find((m) => m.current);
-  // 0722… and 254722… are the same person; match the ledger either way.
-  const asMsisdn = (raw: string) => {
-    const digits = raw.replace(/\D/g, "");
-    return digits.startsWith("254") ? digits : `254${digits.replace(/^0/, "")}`;
-  };
-  const buyerKey = activeBuyer ?? (regPhone.trim() ? asMsisdn(regPhone) : null);
-  const myBuyer = buyerKey
-    ? (state?.buyers.find((b) => asMsisdn(b.phone) === buyerKey) ?? null)
-    : null;
-
   return (
     <div className="wrap">
       <header className="masthead">
@@ -256,6 +102,9 @@ export default function Console() {
           </span>
           <span>
             Ledger <b>{state ? `${state.contract.slice(0, 10)}…` : "—"}</b>
+          </span>
+          <span>
+            <Link href="/buy">Buyer page →</Link>
           </span>
         </div>
       </header>
@@ -362,130 +211,7 @@ export default function Console() {
         <div>
           <section className="panel">
             <h2>
-              <span>1 — Register a buyer</span>
-              <span>Commitment</span>
-            </h2>
-            <div className="body">
-              <p>
-                A buyer signs up with a phone number and what they undertake to pay in total. No
-                money moves and no wallet key is issued to them — deposits arrive in instalments and
-                the ledger measures each one against this commitment.
-              </p>
-              <div className="row">
-                <div>
-                  <label htmlFor="regphone">Phone</label>
-                  <input
-                    id="regphone"
-                    value={regPhone}
-                    onChange={(e) => setRegPhone(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="commitment">Committing (KES)</label>
-                  <input
-                    id="commitment"
-                    type="number"
-                    step={100000}
-                    value={commitment}
-                    onChange={(e) => setCommitment(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button onClick={registerBuyer} disabled={over || busy !== null}>
-                {busy === "register" ? "Registering…" : "Register commitment"}
-              </button>
-              {!myBuyer && (
-                <p className="hint">
-                  Once registered, an instalment panel appears below for this number.
-                </p>
-              )}
-            </div>
-          </section>
-
-          {myBuyer && (
-            <section className="panel">
-              <h2>
-                <span>2 — Pay in instalments</span>
-                <span>{myBuyer.phone}</span>
-              </h2>
-              <div className="body">
-                <p>
-                  Each instalment is an M-Pesa prompt to the number that committed. The money is
-                  held in escrow and released only against verified construction.
-                </p>
-
-                <div className="target">
-                  <div className="target-head">
-                    <span>Your commitment</span>
-                    <b>
-                      {kes(myBuyer.contributed)} of {kes(myBuyer.commitment ?? 0)}
-                    </b>
-                  </div>
-                  <div className="bar">
-                    <div
-                      className="fill"
-                      style={{
-                        width: `${
-                          myBuyer.commitment
-                            ? Math.min(100, (myBuyer.contributed / myBuyer.commitment) * 100)
-                            : 0
-                        }%`,
-                      }}
-                    />
-                  </div>
-                  <div className="target-foot">
-                    {myBuyer.commitment && myBuyer.contributed >= myBuyer.commitment ? (
-                      <span className="done">Commitment met in full</span>
-                    ) : (
-                      <span>
-                        {kes(Math.max(0, (myBuyer.commitment ?? 0) - myBuyer.contributed))} still to
-                        pay
-                      </span>
-                    )}
-                    <span>
-                      {kes(myBuyer.still_held)} protected · {kes(myBuyer.released)} released against
-                      verified work
-                    </span>
-                  </div>
-                </div>
-
-                <label htmlFor="amount">Instalment (KES)</label>
-                <input
-                  id="amount"
-                  type="number"
-                  step={10000}
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-                <button onClick={deposit} disabled={over || busy !== null}>
-                  {busy === "deposit" ? "Sending prompt…" : "Send M-Pesa prompt"}
-                </button>
-
-                {state && state.funding_target > 0 && (
-                  <div className="target site-target">
-                    <div className="target-head">
-                      <span>Development funded</span>
-                      <b>
-                        {kes(state.total_deposited)} of {kes(state.funding_target)}
-                      </b>
-                    </div>
-                    <div className="bar">
-                      <div
-                        className="fill"
-                        style={{
-                          width: `${Math.min(100, (state.total_deposited / state.funding_target) * 100)}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="panel">
-            <h2>
-              <span>3 — Site evidence</span>
+              <span>1 — Site evidence</span>
               <span>Developer</span>
             </h2>
             <div className="body">
@@ -503,7 +229,7 @@ export default function Console() {
 
           <section className="panel">
             <h2>
-              <span>4 — Countersign</span>
+              <span>2 — Countersign</span>
               <span>Two of three required</span>
             </h2>
             <div className="body">
