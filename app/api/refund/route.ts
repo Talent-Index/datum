@@ -10,6 +10,7 @@ import {
   platformWallet,
   publicClient,
   revertReason,
+  WRITE_GAS,
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { PROJECT_ID, ensureProject } from "@/lib/project";
@@ -59,6 +60,7 @@ export async function POST(): Promise<NextResponse> {
         args: [address],
         account,
         chain: client.chain,
+        gas: WRITE_GAS,
       });
       await publicClient().waitForTransactionReceipt({ hash });
     } catch (error) {

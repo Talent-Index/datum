@@ -9,6 +9,7 @@ import {
   platformWallet,
   publicClient,
   revertReason,
+  WRITE_GAS,
 } from "@/lib/chain";
 import { callbackSchema } from "@/lib/daraja";
 import { db, schema } from "@/lib/db";
@@ -85,6 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       args: [account.address, BigInt(payment.amountKes) * KES_UNITS],
       account: platform,
       chain: client.chain,
+      gas: WRITE_GAS,
     });
     await publicClient().waitForTransactionReceipt({ hash });
 

@@ -4,6 +4,7 @@ import { z } from "zod";
 import { toHex } from "viem";
 
 import {
+  WRITE_GAS,
   escrowAbi,
   escrowAddress,
   platformWallet,
@@ -66,6 +67,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       args: [BigInt(milestoneId), role, evidenceHash],
       account,
       chain: client.chain,
+      gas: WRITE_GAS,
     });
     await publicClient().waitForTransactionReceipt({ hash });
 

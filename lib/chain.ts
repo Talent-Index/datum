@@ -26,6 +26,18 @@ import { privateKeyToAccount } from "viem/accounts";
 
 export const KES_UNITS = 100n; // token has 2 decimals: 100 units = KES 1.00
 
+/**
+ * Explicit gas limit for every state-changing call.
+ *
+ * The public Fuji RPC answers eth_estimateGas with a value around 7.7e14
+ * against a block limit of 32 million, and viem passes that straight through
+ * as the gas limit, so the node rejects the transaction as malformed. Every
+ * write in this app is a simple state update — the most expensive, attest,
+ * measures near 100k — so the limit is sent explicitly. Unused gas is
+ * refunded, so the headroom costs nothing.
+ */
+export const WRITE_GAS = 400_000n;
+
 export const escrowAbi = [
   {
     type: "function",

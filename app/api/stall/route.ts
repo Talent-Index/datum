@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import {
+  WRITE_GAS,
   escrowAbi,
   escrowAddress,
   platformWallet,
@@ -22,6 +23,7 @@ export async function POST(): Promise<NextResponse> {
       functionName: "declareStalled",
       account,
       chain: client.chain,
+      gas: WRITE_GAS,
     });
     await publicClient().waitForTransactionReceipt({ hash });
     return NextResponse.json({ ok: true });

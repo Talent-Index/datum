@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { toHex } from "viem";
 
 import {
+  WRITE_GAS,
   escrowAbi,
   escrowAddress,
   oracleWallet,
@@ -121,6 +122,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         args: [BigInt(milestoneId), 0, verdict.evidenceHash as `0x${string}`],
         account,
         chain: client.chain,
+        gas: WRITE_GAS,
       });
       await publicClient().waitForTransactionReceipt({ hash });
       txHash = hash;
