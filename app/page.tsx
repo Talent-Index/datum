@@ -29,10 +29,12 @@ interface Buyer {
   contributed: number;
   released: number;
   still_held: number;
+  commitment: number | null;
   refunded: boolean;
 }
 
 interface VerdictImage {
+  thumbnail?: string | null;
   filename: string;
   checks: Record<string, boolean>;
   notes: string[];
@@ -46,6 +48,7 @@ interface Verdict {
 }
 
 interface Corroboration {
+  developer?: string;
   verdict: string;
   corroborating: string[];
   findings: string[];
@@ -65,6 +68,7 @@ interface ProjectState {
   last_verdict: Verdict | null;
   corroboration: Corroboration | null;
   developer_name: string;
+  funding_target: number;
   contract: string;
 }
 
@@ -104,6 +108,8 @@ export default function Console() {
   const [busy, setBusy] = useState<string | null>(null);
   const [phone, setPhone] = useState("0722114050");
   const [amount, setAmount] = useState("500000");
+  const [regPhone, setRegPhone] = useState("0722114050");
+  const [commitment, setCommitment] = useState("2000000");
   const [developer, setDeveloper] = useState(DEVELOPERS[0]!);
   const filesRef = useRef<HTMLInputElement>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -177,6 +183,16 @@ export default function Console() {
       if (filesRef.current) filesRef.current.value = "";
     });
 
+  const registerBuyer = () =>
+    act("register", async () => {
+      const result = await call("/api/register", {
+        phone: regPhone.trim(),
+        commitmentKes: Number.parseInt(commitment, 10),
+      });
+      setPhone(result.phone as string);
+      showToast(result.message as string);
+    });
+
   const corroborateNow = () =>
     act("corr", async () => {
       const result = await call("/api/corroborate", { developer });
@@ -232,6 +248,45 @@ export default function Console() {
           </span>
         </div>
       </header>
+
+      <section className="explainer">
+        <p className="lede">
+          Off-plan buyers in Kenya pay for homes that do not exist yet. The money goes into a
+          developer&apos;s account, and if the build stalls there is no way to get it back. Datum
+          holds those deposits in escrow and releases them only against construction that has been
+          proven to exist.
+        </p>
+        <div className="how">
+          <div>
+            <span>1 — Buyers pay in</span>
+            <p>
+              Deposits arrive by M-Pesa and are held by a smart contract, denominated in shillings.
+              The developer cannot touch them.
+            </p>
+          </div>
+          <div>
+            <span>2 — The site is photographed</span>
+            <p>
+              Each milestone needs geotagged photographs. Four checks run on every one: it was taken
+              at the site, taken recently, never submitted before, and shows the stage claimed.
+            </p>
+          </div>
+          <div>
+            <span>3 — Two of three sign</span>
+            <p>
+              The evidence pipeline is one signature. A licensed surveyor or the platform is the
+              second. No single party, including us, can move money alone.
+            </p>
+          </div>
+          <div>
+            <span>4 — Or everyone is refunded</span>
+            <p>
+              If the project goes quiet for 30 days, any buyer can declare it stalled. Whatever was
+              never released comes back, pro rata, no matter who claims first.
+            </p>
+          </div>
+        </div>
+      </section>
 
       <section className="register">
         <div className="register-head">
@@ -296,14 +351,69 @@ export default function Console() {
         <div>
           <section className="panel">
             <h2>
-              <span>1 — Buyer deposit</span>
+              <span>1 — Register a buyer</span>
+              <span>Commitment</span>
+            </h2>
+            <div className="body">
+              <p>
+                A buyer signs up with a phone number and what they undertake to pay in total. No
+                money moves and no wallet key is issued to them — deposits arrive in instalments and
+                the ledger measures each one against this commitment.
+              </p>
+              <div className="row">
+                <div>
+                  <label htmlFor="regphone">Phone</label>
+                  <input
+                    id="regphone"
+                    value={regPhone}
+                    onChange={(e) => setRegPhone(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="commitment">Committing (KES)</label>
+                  <input
+                    id="commitment"
+                    type="number"
+                    step={100000}
+                    value={commitment}
+                    onChange={(e) => setCommitment(e.target.value)}
+                  />
+                </div>
+              </div>
+              <button onClick={registerBuyer} disabled={over || busy !== null}>
+                Register commitment
+              </button>
+            </div>
+          </section>
+
+          <section className="panel">
+            <h2>
+              <span>2 — Buyer deposit</span>
               <span>M-Pesa</span>
             </h2>
             <div className="body">
               <p>
-                A buyer commits to a unit. The money lands in escrow, not in the developer&apos;s
-                operating account.
+                An instalment against the commitment. The money lands in escrow, not in the
+                developer&apos;s operating account.
               </p>
+              {state && state.funding_target > 0 && (
+                <div className="target">
+                  <div className="target-head">
+                    <span>Developer&apos;s funding target</span>
+                    <b>
+                      {kes(state.total_deposited)} of {kes(state.funding_target)}
+                    </b>
+                  </div>
+                  <div className="bar">
+                    <div
+                      className="fill"
+                      style={{
+                        width: `${Math.min(100, (state.total_deposited / state.funding_target) * 100)}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="row">
                 <div>
                   <label htmlFor="phone">Phone</label>
@@ -328,7 +438,7 @@ export default function Console() {
 
           <section className="panel">
             <h2>
-              <span>2 — Site evidence</span>
+              <span>3 — Site evidence</span>
               <span>Developer</span>
             </h2>
             <div className="body">
@@ -346,7 +456,7 @@ export default function Console() {
 
           <section className="panel">
             <h2>
-              <span>3 — Countersign</span>
+              <span>4 — Countersign</span>
               <span>Two of three required</span>
             </h2>
             <div className="body">
@@ -402,15 +512,21 @@ export default function Console() {
                   <div className="sum">{state.last_verdict.summary}</div>
                   {state.last_verdict.images.map((image) => (
                     <div className="img" key={image.filename}>
-                      <div className="name">{image.filename}</div>
-                      <div className="checks">
-                        {Object.entries(CHECK_LABELS).map(([key, label]) => (
-                          <span key={key} className={`chk ${image.checks[key] ? "y" : "n"}`}>
-                            {label}
-                          </span>
-                        ))}
+                      {image.thumbnail ? (
+                        /* eslint-disable-next-line @next/next/no-img-element */
+                        <img className="shot" src={image.thumbnail} alt={image.filename} />
+                      ) : null}
+                      <div className="imgbody">
+                        <div className="name">{image.filename}</div>
+                        <div className="checks">
+                          {Object.entries(CHECK_LABELS).map(([key, label]) => (
+                            <span key={key} className={`chk ${image.checks[key] ? "y" : "n"}`}>
+                              {label}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="note">{image.notes.join(" · ")}</div>
                       </div>
-                      <div className="note">{image.notes.join(" · ")}</div>
                     </div>
                   ))}
                   <div className="evhash">Bundle hash {state.last_verdict.evidence_hash}</div>
@@ -424,7 +540,7 @@ export default function Console() {
           <section className="panel">
             <h2>
               <span>Public record check</span>
-              <span>{state?.developer_name ?? "—"}</span>
+              <span>{state?.corroboration?.developer ?? state?.developer_name ?? "—"}</span>
             </h2>
             <div className="body">
               <p>
@@ -492,6 +608,7 @@ export default function Console() {
                 <thead>
                   <tr>
                     <th>Buyer</th>
+                    <th className="n">Committed</th>
                     <th className="n">Paid in</th>
                     <th className="n">Released</th>
                     <th className="n">Protected</th>
@@ -505,6 +622,9 @@ export default function Console() {
                           {buyer.phone}
                           {buyer.refunded && <span className="sig"> refunded</span>}
                         </td>
+                        <td className="n">
+                          {buyer.commitment ? buyer.commitment.toLocaleString("en-US") : "—"}
+                        </td>
                         <td className="n">{buyer.contributed.toLocaleString("en-US")}</td>
                         <td className="n rel-c">{buyer.released.toLocaleString("en-US")}</td>
                         <td className="n held-c">{buyer.still_held.toLocaleString("en-US")}</td>
@@ -512,8 +632,8 @@ export default function Console() {
                     ))
                   ) : (
                     <tr>
-                      <td colSpan={4} className="empty">
-                        No deposits yet
+                      <td colSpan={5} className="empty">
+                        No buyers registered yet
                       </td>
                     </tr>
                   )}

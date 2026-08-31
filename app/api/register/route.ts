@@ -1,0 +1,76 @@
+import { NextResponse } from "next/server";
+import { eq } from "drizzle-orm";
+import { z } from "zod";
+
+import { buyerAccount } from "@/lib/chain";
+import { db, schema } from "@/lib/db";
+import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
+
+/**
+ * A buyer signs up with a phone number and what they undertake to pay in
+ * total. No money moves here and no key is issued to them: registration
+ * reserves the managed wallet their deposits and refunds will use, so the
+ * ledger can measure instalments against a commitment from the first
+ * payment onward.
+ */
+const bodySchema = z.object({
+  phone: z
+    .string()
+    .trim()
+    .regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678"),
+  commitmentKes: z.number().int().positive().max(1_000_000_000),
+});
+
+/** 0712345678 and +254712345678 are the same person; store one form. */
+function normalisePhone(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  return digits.startsWith("254") ? digits : `254${digits.replace(/^0/, "")}`;
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const parsed = bodySchema.safeParse(await request.json().catch(() => null));
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: parsed.error.issues[0]?.message ?? "Send { phone, commitmentKes }" },
+      { status: 400 },
+    );
+  }
+  const phone = normalisePhone(parsed.data.phone);
+  const { commitmentKes } = parsed.data;
+
+  await ensureProject();
+  const database = db();
+  const address = buyerAccount(phone).address;
+
+  const existing = await database
+    .select({ id: schema.buyers.id })
+    .from(schema.buyers)
+    .where(eq(schema.buyers.phone, phone));
+
+  if (existing.length) {
+    // Re-registering revises the commitment rather than creating a second
+    // buyer; the wallet is derived from the number, so it does not move.
+    await database
+      .update(schema.buyers)
+      .set({ commitmentKes })
+      .where(eq(schema.buyers.phone, phone));
+  } else {
+    await database.insert(schema.buyers).values({
+      projectId: PROJECT_ID,
+      phone,
+      walletAddress: address,
+      commitmentKes,
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    phone,
+    address,
+    commitmentKes,
+    message:
+      `${phone} registered for ${SITE_NAME} with a commitment of ` +
+      `KES ${commitmentKes.toLocaleString("en-US")}. Deposit in instalments; ` +
+      `each one is held in escrow and released only against verified construction.`,
+  });
+}

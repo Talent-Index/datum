@@ -14,6 +14,7 @@ import {
 import { db, schema } from "@/lib/db";
 import {
   DEVELOPER_NAME,
+  FUNDING_TARGET_KES,
   MILESTONES,
   PROJECT_ID,
   ROLE_NAMES,
@@ -86,7 +87,9 @@ export async function GET(): Promise<NextResponse> {
           functionName: "buyerPosition",
           args: [buyer.walletAddress as `0x${string}`],
         });
-        if (contributed === 0n) return null;
+        // A buyer who has registered but not yet paid still belongs on the
+        // ledger: their commitment is what the developer is counting on.
+        if (contributed === 0n && !buyer.commitmentKes) return null;
         const refunded = await chain.readContract({
           ...escrow,
           functionName: "refunded",
@@ -98,6 +101,7 @@ export async function GET(): Promise<NextResponse> {
           contributed: Number(contributed / KES_UNITS),
           released: Number(released / KES_UNITS),
           still_held: Number(stillHeld / KES_UNITS),
+          commitment: buyer.commitmentKes ?? null,
           refunded,
         };
       }),
@@ -129,6 +133,7 @@ export async function GET(): Promise<NextResponse> {
     last_verdict: lastOracle[0]?.verdict ?? null,
     corroboration: lastCorroboration[0]?.result ?? null,
     developer_name: DEVELOPER_NAME,
+    funding_target: FUNDING_TARGET_KES,
     contract: escrowAddress(),
   });
 }

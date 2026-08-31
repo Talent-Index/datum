@@ -41,3 +41,4 @@ skills-lock.json
 
 # Demo photographs (Wikimedia Commons, CC-licensed — not redistributed here)
 demo-photos/
+.finish-deploy.sh

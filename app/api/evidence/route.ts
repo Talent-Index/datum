@@ -1,4 +1,5 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import sharp from "sharp";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { NextResponse } from "next/server";
@@ -85,6 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const dir = await mkdtemp(join(tmpdir(), "evidence-"));
   let verdict: Verdict;
   let store: PostgresSeenHashStore | null = null;
+  let thumbnails: Record<string, string | null> = {};
   try {
     const paths: string[] = [];
     for (const file of files) {
@@ -106,6 +108,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       milestoneId,
       claimedStage,
       paths,
+    );
+    // The uploads are deleted with the temp directory, so carry a small
+    // preview back with the verdict: a reviewer needs to see the photograph
+    // a check was made about, not just its filename.
+    thumbnails = Object.fromEntries(
+      await Promise.all(
+        paths.map(async (path) => {
+          const preview = await sharp(path)
+            .resize(220, 165, { fit: "cover" })
+            .jpeg({ quality: 62 })
+            .toBuffer()
+            .catch(() => null);
+          return [
+            basename(path),
+            preview ? `data:image/jpeg;base64,${preview.toString("base64")}` : null,
+          ] as const;
+        }),
+      ),
     );
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -149,18 +169,21 @@ export async function POST(request: Request): Promise<NextResponse> {
     evidenceHash: verdict.accepted ? verdict.evidenceHash : toHex(new Uint8Array(32)),
     accepted: verdict.accepted,
     summary: verdict.summary,
-    verdict: toWireVerdict(verdict),
+    verdict: toWireVerdict(verdict, thumbnails),
     txHash,
   });
 
   // Accepted image hashes are already persisted to evidence_images by the
   // verifier's seen-hash store; a second insert here would double-count.
 
-  return NextResponse.json(toWireVerdict(verdict));
+  return NextResponse.json(toWireVerdict(verdict, thumbnails));
 }
 
 /** Same wire shape as the reference implementation's verdict dictionary. */
-function toWireVerdict(v: Verdict): Record<string, unknown> {
+function toWireVerdict(
+  v: Verdict,
+  thumbnails: Record<string, string | null> = {},
+): Record<string, unknown> {
   return {
     project_id: v.projectId,
     milestone_id: v.milestoneId,
@@ -175,6 +198,7 @@ function toWireVerdict(v: Verdict): Record<string, unknown> {
       checks: i.checks,
       notes: i.notes,
       failures: i.failures,
+      thumbnail: thumbnails[i.filename] ?? null,
     })),
     summary: v.summary,
   };

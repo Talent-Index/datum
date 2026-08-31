@@ -15,6 +15,9 @@ export const SITE_LON = 36.7827;
 export const DEVELOPER_NAME = "Willow Park Developments Ltd";
 export const PROJECT_REF = "EBK/PR/2026/00812";
 
+/** What the developer must raise before the build is fully funded. */
+export const FUNDING_TARGET_KES = 20_000_000;
+
 export const MILESTONES: Array<{ description: string; stage: string; percent: number }> = [
   { description: "Site clearing and foundation", stage: "foundation", percent: 20 },
   { description: "Ground floor slab", stage: "ground_slab", percent: 20 },
@@ -48,6 +51,7 @@ export async function ensureProject(): Promise<void> {
       latitude: SITE_LAT,
       longitude: SITE_LON,
       contractAddress: process.env.ESCROW_ADDRESS ?? null,
+      fundingTargetKes: FUNDING_TARGET_KES,
     });
     await database.insert(schema.milestones).values(
       MILESTONES.map((m, i) => ({

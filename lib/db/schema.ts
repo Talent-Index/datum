@@ -29,6 +29,9 @@ export const projects = pgTable("projects", {
   latitude: doublePrecision("latitude").notNull(),
   longitude: doublePrecision("longitude").notNull(),
   contractAddress: text("contract_address"),
+  // What the developer needs raised before the build is fully funded, in
+  // whole shillings. Buyers commit against it and deposit toward it.
+  fundingTargetKes: integer("funding_target_kes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -58,6 +61,9 @@ export const buyers = pgTable(
       .references(() => projects.id),
     phone: text("phone").notNull(),
     walletAddress: text("wallet_address").notNull(),
+    // What this buyer undertook to pay in total. Deposits arrive in
+    // instalments, so the commitment is what the ledger measures against.
+    commitmentKes: integer("commitment_kes"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [uniqueIndex("buyers_project_phone").on(table.projectId, table.phone)],
