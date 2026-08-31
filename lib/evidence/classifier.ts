@@ -181,6 +181,9 @@ const NVIDIA_API = "https://integrate.api.nvidia.com/v1/chat/completions";
 // before they are sent. Site photographs off a phone are routinely 3-8MB.
 const MAX_INLINE_BYTES = 140_000;
 
+// Attempts per frame before giving up and reporting it unclassifiable.
+const ATTEMPTS = 3;
+
 const nvidiaResponseSchema = z.object({
   choices: z
     .array(z.object({ message: z.object({ content: z.string().nullish() }).nullish() }))
@@ -230,17 +233,13 @@ export class NvidiaClassifier implements StageClassifier {
     }
     const image = await this.encode(imagePath);
 
-    // The endpoint occasionally stalls for minutes. Cap each call so one slow
-    // frame degrades to "stage could not be determined" — a visible, honest
-    // rejection — instead of taking the whole submission down with it.
-    const abort = AbortSignal.timeout(this.timeoutMs);
-    let response: Response;
-    try {
-      response = await fetch(NVIDIA_API, {
-      method: "POST",
-      signal: abort,
-      headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
-      body: JSON.stringify({
+    // The hosted endpoint is unreliable in two distinct ways: it stalls for
+    // minutes at a time, and it fails intermittently on a frame that
+    // succeeds moments later. Each attempt is capped, and a transient
+    // failure is retried rather than being read as an unclassifiable
+    // photograph — an honest developer's evidence should not be rejected
+    // because a GPU queue hiccuped.
+    const body = JSON.stringify({
         model: this.model,
         max_tokens: 128,
         temperature: 0,
@@ -253,22 +252,36 @@ export class NvidiaClassifier implements StageClassifier {
             ],
           },
         ],
-      }),
-      });
-    } catch {
-      return UNKNOWN;
-    }
+    });
 
-    if (!response.ok) {
-      const body = await response.text();
-      throw new Error(
-        `Stage classification request failed with HTTP ${response.status}: ${body.slice(0, 300)}`,
-      );
-    }
+    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 750 * attempt));
+      let response: Response;
+      try {
+        response = await fetch(NVIDIA_API, {
+          method: "POST",
+          signal: AbortSignal.timeout(this.timeoutMs),
+          headers: { authorization: `Bearer ${this.apiKey}`, "content-type": "application/json" },
+          body,
+        });
+      } catch {
+        continue; // timed out or the connection dropped; try again
+      }
 
-    const parsed = nvidiaResponseSchema.safeParse(await response.json());
-    const text = parsed.success ? parsed.data.choices[0]?.message?.content : null;
-    return text ? readStage(text) : UNKNOWN;
+      // A rejected key is a configuration fault, not a bad photograph, and
+      // silently reporting every frame as unclassifiable would hide it.
+      if (response.status === 401 || response.status === 403) {
+        throw new Error(
+          `NVIDIA rejected the API key (HTTP ${response.status}); check NVIDIA_API_KEY`,
+        );
+      }
+      if (!response.ok) continue;
+
+      const parsed = nvidiaResponseSchema.safeParse(await response.json().catch(() => null));
+      const text = parsed.success ? parsed.data.choices[0]?.message?.content : null;
+      if (text) return readStage(text);
+    }
+    return UNKNOWN;
   }
 }
 
