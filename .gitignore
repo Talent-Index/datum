@@ -40,5 +40,5 @@ CLAUDE.md
 skills-lock.json
 
 # Demo photographs (Wikimedia Commons, CC-licensed — not redistributed here)
-demo-photos/
+demo-photos/*.jpg
 .finish-deploy.sh
