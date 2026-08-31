@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { buyerAccount } from "@/lib/chain";
+import { buyerAccount, normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
 
@@ -21,12 +21,6 @@ const bodySchema = z.object({
   commitmentKes: z.number().int().positive().max(1_000_000_000),
 });
 
-/** 0712345678 and +254712345678 are the same person; store one form. */
-function normalisePhone(raw: string): string {
-  const digits = raw.replace(/\D/g, "");
-  return digits.startsWith("254") ? digits : `254${digits.replace(/^0/, "")}`;
-}
-
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -35,7 +29,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  const phone = normalisePhone(parsed.data.phone);
+  const phone = normaliseMsisdn(parsed.data.phone);
   const { commitmentKes } = parsed.data;
 
   await ensureProject();

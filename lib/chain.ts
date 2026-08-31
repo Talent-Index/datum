@@ -204,12 +204,26 @@ export const oracleWallet = () => walletFor("ORACLE_KEY");
 export const surveyorWallet = () => walletFor("SURVEYOR_KEY");
 
 /**
+ * One canonical form for a Kenyan mobile number.
+ *
+ * The wallet is derived from this string, so 0722123456 and 254722123456
+ * must not resolve to different accounts: the same buyer would end up with
+ * two escrow positions, and instalments paid under one form would never
+ * count against a commitment registered under the other.
+ */
+export function normaliseMsisdn(raw: string): string {
+  const digits = raw.replace(/\D/g, "");
+  if (digits.startsWith("254")) return digits;
+  return `254${digits.replace(/^0/, "")}`;
+}
+
+/**
  * Phone number in, managed account out. Derivation from a master seed keeps
  * refunds spendable; the buyer never sees the key and never signs.
  */
 export function buyerAccount(phone: string): Account {
   const seed = requireEnv("BUYER_MASTER_SEED");
-  return privateKeyToAccount(keccak256(toBytes(`${seed}:${phone}`)));
+  return privateKeyToAccount(keccak256(toBytes(`${seed}:${normaliseMsisdn(phone)}`)));
 }
 
 export function revertReason(error: unknown): string {

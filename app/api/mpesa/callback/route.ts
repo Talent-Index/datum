@@ -4,6 +4,7 @@ import { and, eq } from "drizzle-orm";
 import {
   KES_UNITS,
   buyerAccount,
+  normaliseMsisdn,
   escrowAbi,
   escrowAddress,
   platformWallet,
@@ -67,15 +68,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     (item: { Name: string; Value?: string | number }) => item.Name === "MpesaReceiptNumber",
   )?.Value;
 
-  const account = buyerAccount(payment.phone);
-  await database
-    .insert(schema.buyers)
-    .values({
-      projectId: payment.projectId,
-      phone: payment.phone,
-      walletAddress: account.address,
-    })
-    .onConflictDoNothing();
+  // A buyer who registered a commitment already has a wallet. Re-deriving
+  // here would strand this instalment at a second address, so the stored one
+  // wins and derivation is only for a buyer paying without registering.
+  const phone = normaliseMsisdn(payment.phone);
+  const existing = await database
+    .select({ walletAddress: schema.buyers.walletAddress })
+    .from(schema.buyers)
+    .where(eq(schema.buyers.phone, phone));
+  const walletAddress =
+    existing[0]?.walletAddress ?? (buyerAccount(phone).address as string);
+  if (!existing.length) {
+    await database
+      .insert(schema.buyers)
+      .values({ projectId: payment.projectId, phone, walletAddress })
+      .onConflictDoNothing();
+  }
 
   try {
     const { client, account: platform } = platformWallet();
@@ -83,7 +91,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       address: escrowAddress(),
       abi: escrowAbi,
       functionName: "depositFor",
-      args: [account.address, BigInt(payment.amountKes) * KES_UNITS],
+      args: [walletAddress as `0x${string}`, BigInt(payment.amountKes) * KES_UNITS],
       account: platform,
       chain: client.chain,
       gas: WRITE_GAS,

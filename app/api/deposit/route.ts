@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
+import { normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { stkPush } from "@/lib/daraja";
 import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
@@ -24,7 +25,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       { status: 400 },
     );
   }
-  const { phone, kes } = parsed.data;
+  const { kes } = parsed.data;
+  // Stored canonically so the callback resolves the same buyer either way.
+  const phone = normaliseMsisdn(parsed.data.phone);
 
   await ensureProject();
 
