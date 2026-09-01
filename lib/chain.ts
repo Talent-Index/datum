@@ -204,6 +204,21 @@ export const oracleWallet = () => walletFor("ORACLE_KEY");
 export const surveyorWallet = () => walletFor("SURVEYOR_KEY");
 
 /**
+ * The sender's own signing account, derived from their number like any other
+ * managed wallet. On a remittance build this address is attester 1, so the
+ * release genuinely requires their approval and not the platform standing in
+ * for them.
+ *
+ * The key is still custodial — we derive it — so this raises the bar without
+ * clearing it. A sender who wants a guarantee we cannot sign for them needs
+ * to hold the key themselves; the seam for that is this function.
+ */
+export function senderWallet(phone: string): { client: WalletClient; account: Account } {
+  const account = buyerAccount(phone);
+  return { client: createWalletClient({ account, chain: chain(), transport: http() }), account };
+}
+
+/**
  * One canonical form for a Kenyan mobile number.
  *
  * The wallet is derived from this string, so 0722123456 and 254722123456

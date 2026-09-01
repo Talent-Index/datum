@@ -67,6 +67,9 @@ export interface ProjectState {
   corroboration: Corroboration | null;
   developer_name: string;
   funding_target: number;
+  is_remittance: boolean;
+  sender_phone: string | null;
+  awaiting_sender: boolean;
   contract: string;
 }
 

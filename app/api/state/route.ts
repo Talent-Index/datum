@@ -15,6 +15,8 @@ import { db, schema } from "@/lib/db";
 import {
   DEVELOPER_NAME,
   FUNDING_TARGET_KES,
+  IS_REMITTANCE,
+  SENDER_PHONE,
   MILESTONES,
   PROJECT_ID,
   ROLE_NAMES,
@@ -134,6 +136,16 @@ export async function GET(): Promise<NextResponse> {
     corroboration: lastCorroboration[0]?.result ?? null,
     developer_name: DEVELOPER_NAME,
     funding_target: FUNDING_TARGET_KES,
+    is_remittance: IS_REMITTANCE,
+    sender_phone: SENDER_PHONE,
+    // The sender is asked to decide only once the pipeline has accepted the
+    // photographs and their own signature is still outstanding.
+    awaiting_sender:
+      IS_REMITTANCE &&
+      status === "Active" &&
+      (lastOracle[0]?.verdict as { accepted?: boolean } | null)?.accepted === true &&
+      milestones[next]?.approvals === 1 &&
+      !milestones[next]?.signers.includes("Sender"),
     contract: escrowAddress(),
   });
 }

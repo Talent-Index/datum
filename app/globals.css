@@ -295,3 +295,12 @@ footer{margin-top:34px;padding-top:14px;border-top:1px solid var(--rule);
   line-height: 1.5;
   color: var(--muted);
 }
+
+/* ── the sender's decision ───────────────────────────────── */
+.panel.decide {
+  border-color: var(--held);
+  box-shadow: inset 3px 0 0 var(--held);
+}
+.panel.decide > h2 {
+  color: var(--held);
+}

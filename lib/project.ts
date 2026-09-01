@@ -26,9 +26,20 @@ export const MILESTONES: Array<{ description: string; stage: string; percent: nu
   { description: "Finishing and handover", stage: "finishing", percent: 20 },
 ];
 
+/**
+ * A remittance build: someone abroad paying a relative or fundi to put up a
+ * house on their own plot. Set SENDER_PHONE and the second of the three
+ * signatures belongs to the person whose money it is, rather than to a
+ * surveyor the platform appointed. They approve each milestone from the
+ * photographs, so the builder cannot release a shilling on their own say-so
+ * and neither can we.
+ */
+export const SENDER_PHONE = process.env.SENDER_PHONE?.trim() || null;
+export const IS_REMITTANCE = SENDER_PHONE !== null;
+
 export const ROLE_NAMES: Record<number, string> = {
   0: "Evidence pipeline",
-  1: "Quantity surveyor",
+  1: IS_REMITTANCE ? "Sender" : "Quantity surveyor",
   2: "Platform",
 };
 

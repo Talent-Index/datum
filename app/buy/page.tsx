@@ -5,6 +5,13 @@ import { useState } from "react";
 
 import { asMsisdn, call, kes, useProject } from "@/lib/ui/project";
 
+const CHECK_LABELS: Record<string, string> = {
+  location: "at your plot",
+  recency: "recent",
+  novelty: "not sent before",
+  stage: "stage matches",
+};
+
 /**
  * The buyer's page. Written for someone putting money into a house that does
  * not exist yet, so it carries only what they act on — a commitment and
@@ -40,6 +47,12 @@ export default function Buy() {
         kes: Number.parseInt(amount, 10),
       });
       showToast(String(result.sms ?? "Check your phone for the M-Pesa prompt."));
+    });
+
+  const decide = (decision: "approve" | "decline") =>
+    act(decision, async () => {
+      const result = await call("/api/approve", { decision });
+      showToast(result.message as string, decision === "decline");
     });
 
   const remaining = me?.commitment ? Math.max(0, me.commitment - me.contributed) : 0;
@@ -175,6 +188,55 @@ export default function Buy() {
         </div>
 
         <div>
+          {state?.awaiting_sender && state.last_verdict && (
+            <section className="panel decide">
+              <h2>
+                <span>Your approval is needed</span>
+                <span>{state.milestones.find((m) => m.current)?.description ?? ""}</span>
+              </h2>
+              <div className="body">
+                <p>
+                  The builder says this milestone is done and the photographs passed every
+                  check. Nothing is released until you say so — look at them and decide.
+                </p>
+                {state.last_verdict.images.map((image) => (
+                  <div className="img" key={image.filename}>
+                    {image.thumbnail ? (
+                      /* eslint-disable-next-line @next/next/no-img-element */
+                      <img className="shot" src={image.thumbnail} alt={image.filename} />
+                    ) : null}
+                    <div className="imgbody">
+                      <div className="checks">
+                        {Object.entries(CHECK_LABELS).map(([key, label]) => (
+                          <span key={key} className={`chk ${image.checks[key] ? "y" : "n"}`}>
+                            {label}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="note">{image.notes.join(" · ")}</div>
+                    </div>
+                  </div>
+                ))}
+                <div className="btns">
+                  <button onClick={() => decide("approve")} disabled={busy !== null}>
+                    {busy === "approve" ? "Releasing…" : "Approve and release"}
+                  </button>
+                  <button
+                    className="danger"
+                    onClick={() => decide("decline")}
+                    disabled={busy !== null}
+                  >
+                    Not satisfied
+                  </button>
+                </div>
+                <p className="hint">
+                  Approving releases only this milestone&apos;s share. The rest of your money
+                  stays in escrow until the next stage is proven.
+                </p>
+              </div>
+            </section>
+          )}
+
           <section className="panel">
             <h2>
               <span>Where your money is</span>
