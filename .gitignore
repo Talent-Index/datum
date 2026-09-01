@@ -42,3 +42,6 @@ skills-lock.json
 # Demo photographs (Wikimedia Commons, CC-licensed — not redistributed here)
 demo-photos/*.jpg
 .finish-deploy.sh
+
+# Hackathon submission assets (local only)
+submission/
