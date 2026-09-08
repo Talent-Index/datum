@@ -1,144 +1,296 @@
-# Off-plan escrow
+# Off-Plan Escrow
 
-Buyer deposits are held until construction evidence passes verification. Two
-of three independent attesters release each milestone. If the developer walks
-away, whatever has not been released comes back pro rata.
+An escrow system for off-plan construction.
 
-TypeScript port of the Python reference implementation, preserved in git
-history at the `Add Python reference implementation` commit. Next.js on
-Vercel, Foundry for contracts, Postgres via Drizzle. All 63 reference test
-assertions have passing equivalents; the escrow suite runs under Foundry and
-the evidence and data suites under Vitest, offline.
+A buyer’s funds stay locked until there is enough construction evidence to verify a milestone. Each milestone is reviewed by three independent attesters, and any two of them must approve it before the funds are released.
 
-## Layout
+If the developer stops the project, anything that has not already been released is refunded to buyers on a pro-rata basis.
 
+This is a TypeScript port of the original Python reference implementation. The Python version is preserved in git history under the `Add Python reference implementation` commit.
+
+The application runs on Next.js and Vercel, with Foundry handling the contracts and Postgres + Drizzle handling application data.
+
+All 63 assertions from the reference implementation have passing equivalents. The escrow tests run with Foundry, while the evidence and data tests run with Vitest and work completely offline.
+
+## Project structure
+
+```text
+contracts/src/PropertyEscrow.sol
+  Escrow logic, attestations, and refunds.
+
+contracts/src/MockKES.sol
+  KES-pegged test token with 2 decimals.
+
+contracts/test/PropertyEscrow.t.sol
+  Four money-flow scenarios with 22 assertions.
+
+contracts/script/Deploy.s.sol
+  Contract deployment for Fuji or Anvil.
+
+lib/evidence/
+  EXIF, geofence, timestamp, perceptual hash, and stage checks.
+
+lib/data/
+  Cached data fetching, Nominatim/Overpass integration, and register adapters.
+
+lib/db/
+  Drizzle schema and database migrations.
+
+lib/chain.ts
+  viem clients, ABIs, and managed buyer accounts.
+
+lib/daraja.ts
+  M-Pesa STK push and callback schemas.
+
+app/api/
+  Deposit, M-Pesa callbacks, evidence, attestation,
+  corroboration, state, stall and refund endpoints.
+
+app/page.tsx
+  The drawdown register console.
+
+fixtures/
+  Offline cache and register CSVs committed to the repository.
+
+tests/
+  Vitest suites covering evidence, data, and storage.
 ```
-contracts/src/PropertyEscrow.sol   escrow, attestation, refunds (unchanged)
-contracts/src/MockKES.sol          KES-pegged test token, 2 decimals (unchanged)
-contracts/test/PropertyEscrow.t.sol  the four money-path scenarios, 22 assertions
-contracts/script/Deploy.s.sol      deployment to Fuji or Anvil
-lib/evidence/                      EXIF geofence, recency, perceptual hash, stage
-lib/data/                          cached fetch, Nominatim/Overpass, register adapters
-lib/db/                            Drizzle schema; migrations in drizzle/
-lib/chain.ts                       viem clients, ABIs, managed buyer accounts
-lib/daraja.ts                      M-Pesa STK push and callback schemas
-app/api/                           deposit, mpesa/callback, evidence, attest,
-                                   corroborate, state, stall, refund
-app/page.tsx                       the drawdown register console
-fixtures/                          committed offline cache and register CSVs
-tests/                             Vitest suites (evidence 20, data 24, store 4)
-```
 
-## Run it
+## Running the tests
+
+Start by installing the dependencies and the Foundry submodule:
 
 ```bash
-git submodule update --init   # forge-std, needed by the contract tests
+git submodule update --init
 npm install
-npm test                      # 48 assertions, fully offline
-npm run test:contracts        # 22 assertions under Foundry
 ```
 
-The full app needs a chain, a database, and configuration:
+Then run the tests:
 
 ```bash
-cp .env.example .env    # fill in keys and addresses
+npm test
+npm run test: contracts
+```
 
-# Local chain: an Anvil fork, then deploy
+`npm test` runs the 48 application-level assertions completely offline.
+
+`npm run test: contracts` runs the 22 Foundry assertions for the escrow contract.
+
+## Running the application locally
+
+The full application needs a blockchain, a database, and the required environment variables.
+
+Start with:
+
+```bash
+cp .env.example .env
+```
+
+Fill in the required keys and contract addresses.
+
+### Local chain
+
+Start Anvil and deploy the contracts:
+
+```bash
 anvil &
 cd contracts && forge script script/Deploy.s.sol \
   --rpc-url http://127.0.0.1:8545 --broadcast
-# put the printed addresses in .env with RPC_URL=http://127.0.0.1:8545
-
-# Database
-npm run db:migrate
-
-npm run dev             # console on http://localhost:3000
 ```
 
-For Fuji, deploy with `--rpc-url https://api.avax-test.network/ext/bc/C/rpc`
-using three separately funded keys so two-of-three is real rather than one
-account signing twice.
+Take the addresses printed by the deployment and add them to `.env` together with:
 
-## The evidence pipeline
+```text
+RPC_URL=http://127.0.0.1:8545
+```
 
-Four checks on every submitted image, same semantics and rejection wording as
-the reference: EXIF GPS inside the site geofence (exifr returns decimal
-degrees, so the DMS conversion helper is gone), capture timestamp inside the
-reporting window with future timestamps rejected separately from stale ones,
-perceptual hash within Hamming distance 6 of nothing previously accepted, and
-classified stage matching the claim at confidence 0.6 or better.
+### Database
 
-The perceptual hash is owned, not imported: 32x32 greyscale through sharp,
-DCT-II, top-left 8x8 coefficient block, threshold against the median, packed
-to 64 bits. Seen hashes live in Postgres as BIGINT and the Hamming comparison
-runs in SQL, so the check holds across serverless instances. The bundle hash
-over a submission is byte-compatible with the reference — a fixed-input
-vector generated by the Python implementation is asserted in the tests, along
-with stability across runs and sensitivity to every input.
+Run the migrations:
 
-Stage classification sits behind one interface. The default backend calls a
-vision-language model over fetch with a zod-validated JSON response
-(`ANTHROPIC_API_KEY`; server-side refusal fallback enabled); the sidecar
-backend reads a label file uploaded with the image so tests and demos stay
-deterministic and offline. The seam for a fine-tuned ONNX classifier is that
-interface — onnxruntime-node is deliberately not a dependency, it does not
-fit in a Vercel function.
+```bash
+npm run db: migrate
+```
+
+Then start Next.js:
+
+```bash
+npm run dev
+```
+
+The console will be available at:
+
+```text
+http://localhost:3000
+```
+
+### Fuji
+
+For Fuji, deploy against:
+
+```text
+https://api.avax-test.network/ext/bc/C/rpc
+```
+
+Use three separately funded accounts when testing attestations. That way, the two-of-three approval model is actually being exercised rather than having one account sign multiple times.
+
+## Evidence verification
+
+Every submitted image goes through four checks.
+
+1. **Location**
+   EXIF GPS coordinates must fall inside the project's site geofence.
+
+2. **Timestamp**
+   The capture time must fall within the reporting window. Future timestamps are rejected separately from stale submissions.
+
+3. **Image similarity**
+   A perceptual hash is compared against previously accepted submissions. Images within a Hamming distance of 6 are rejected.
+
+4. **Construction stage**
+   The classified stage must match the milestone being claimed, with a minimum confidence of 0.6.
+
+The checks follow the same semantics and rejection wording as the reference implementation.
+
+The perceptual hash is implemented in the project rather than pulled in as a dependency. Images are converted to 32x32 grayscale using `sharp`, processed with DCT-II, reduced to the top-left 8x8 coefficient block, thresholded against the median, and packed into a 64-bit value.
+
+Those hashes are stored in Postgres as `BIGINT`. The Hamming-distance comparison happens in SQL, which means the duplicate check works consistently across serverless instances.
+
+The submission bundle hash is also byte-compatible with the Python reference. The tests include a fixed vector generated by the original implementation, along with checks for stability and sensitivity to each input.
+
+### Stage classification
+
+Stage classification sits behind a single `StageClassifier` interface.
+
+The default implementation calls a vision-language model using `fetch` and validates the response with Zod. It uses `ANTHROPIC_API_KEY` and has a server-side refusal fallback.
+
+There is also a sidecar backend that reads a label file uploaded with the image. This keeps tests and demos deterministic and fully offline.
+
+The same interface leaves room for a fine-tuned ONNX classifier later. `onnxruntime-node` is intentionally not included because it does not fit well within a Vercel function.
 
 ## Public data
 
-Same four sources, same severity ordering, same verdicts. OpenStreetMap via
-Nominatim and Overpass; NCA, Kenya Gazette and EBK behind CSV-backed adapters
-whose acquisition paths are documented honestly in `lib/data/registers.ts`.
-Fetches are cached in Upstash Redis or Vercel KV when `KV_REST_API_URL` is
-set, on disk under `fixtures/cache` otherwise, keyed identically to the
-reference (SHA-256 of URL plus body) — the committed fixtures carried over
-unmodified. Offline is the default; `npm run warm` fetches live and
-`npm run warm -- --seed` writes placeholder fixtures. Rate limits and the
-contact User-Agent are enforced; Nominatim rejects anonymous clients.
+The application uses the same four data sources as the reference implementation, with the same severity ordering and verdicts.
+
+For public geographic data, it uses:
+
+* OpenStreetMap
+* Nominatim
+* Overpass
+
+The NCA, Kenya Gazette, and EBK data are accessed through CSV-backed adapters. Their acquisition paths are documented in `lib/data/registers.ts`.
+
+Offline mode is the default.
+
+When `KV_REST_API_URL` is available, fetched data is cached in Upstash Redis or Vercel KV. Otherwise, the cache is stored locally under `fixtures/cache`.
+
+Cache keys match the reference implementation: SHA-256 of the URL and request body.
+
+The committed fixtures are carried over unchanged.
+
+To fetch live data:
+
+```bash
+npm run warm
+```
+
+To generate placeholder fixtures:
+
+```bash
+npm run warm -- --seed
+```
+
+Rate limits and the required contact User-Agent are enforced. Nominatim requests are not made anonymously.
 
 ## M-Pesa
 
-`/api/deposit` sends the Daraja STK push and creates the pending payment row
-keyed on the returned CheckoutRequestID before responding — the callback can
-arrive first. AccountReference is capped at 12 alphanumeric characters and is
-not echoed back, so it carries nothing load-bearing; the CheckoutRequestID is
-the only join key. `/api/mpesa/callback` is idempotent: Safaricom retries,
-and only a row still in `pending` is acted on. A confirmed payment mints the
-claim on chain via `depositFor` from the settlement wallet; a failed chain
-write is recorded on the row for replay, never dropped.
+The payment flow uses Safaricom Daraja.
 
-## Deviations from the reference, all deliberate
+`/api/deposit` starts the STK push and creates a pending payment record using the returned `CheckoutRequestID` before responding.
 
-- The reference's `failures = zip(notes, checks.values())` silently dropped
-  stage-failure reasons from rejection summaries whenever the novelty check
-  passed, because a passing novelty check adds no note. The port pairs notes
-  with their own checks; the reference's own specification — a rejection
-  summary names only what failed — describes the corrected behaviour. No
-  test assertion distinguishes the two.
-- `bit_count(phash # $1)` as specified does not exist in Postgres —
-  `bit_count` is defined for bit and bytea, not bigint. The comparison is
-  `bit_count((phash # $2)::bit(64))`, asserted against real Postgres (PGlite)
-  in the tests.
-- The demo console submits real uploads instead of canned fraud scenarios,
-  and there is no `/api/reset` — on a persistent chain, reset means
-  redeploying the contract and pointing `ESCROW_ADDRESS` at it.
+This matters because the M-Pesa callback can arrive before the original request has finished processing.
 
-## Left out, and why
+`AccountReference` is limited to 12 alphanumeric characters and is not used as a data-bearing identifier. The `CheckoutRequestID` is the only join key.
 
-- ONNX stage classification: the interface seam exists, the runtime does not
-  fit a Vercel function. Wire it behind `StageClassifier` when there is a
-  labelled dataset worth training on.
-- IPFS pinning, permissioned L1, eERC confidential balances, KYC: not
-  started in the reference and not started here.
-- Managed wallets are seed-derived. Production custody is a KMS or an
-  embedded-wallet provider behind `buyerAccount()`.
+The callback endpoint is idempotent. Safaricom can retry callbacks, but only a payment still marked as `pending` is processed.
+
+Once payment is confirmed, the settlement wallet calls `depositFor` to mint the claim on chain.
+
+If the chain transaction fails, the failure is recorded against the payment row so it can be replayed later. It is never silently discarded.
+
+## Differences from the reference implementation
+
+There are a few intentional differences.
+
+### Rejection summaries
+
+The Python reference used:
+
+```text
+failures = zip(notes, checks.values())
+```
+
+That could cause stage-failure reasons to disappear from the rejection summary when the novelty check passed.
+
+The TypeScript implementation pairs each note with its own check instead.
+
+The result is simpler and matches the intended specification: a rejection summary should tell you exactly which checks failed and why.
+
+No existing test distinguishes the two behaviours.
+
+### Postgres bit counting
+
+Postgres does not provide `bit_count` for `BIGINT` in the way the reference expression expects.
+
+The implementation therefore uses:
+
+```text
+bit_count((phash # $2)::bit(64))
+```
+
+The behaviour is tested against real Postgres through PGlite.
+
+## What is intentionally not included
+
+### ONNX stage classification
+
+The `StageClassifier` interface is already in place, but the runtime classifier is not.
+
+There is no reason to ship a model before there is a labelled dataset worth training on, and `onnxruntime-node` is not a good fit for the current Vercel deployment.
+
+### Other features
+
+The following are outside the current scope:
+
+* IPFS pinning
+* Permissioned L1
+* eERC confidential balances
+* KYC
+
+None of these were part of the original reference implementation either.
+
+### Managed wallets
+
+The current managed wallets are seed-derived.
+
+For production, custody should move behind a KMS or embedded-wallet provider through `buyerAccount()`.
+
+## Demo console
+
+The demo console uses real image uploads rather than canned fraud scenarios.
+
+There is deliberately no `/api/reset`.
+
+On a persistent chain, resetting the system means deploying a fresh contract and pointing `ESCROW_ADDRESS` to the new deployment.
 
 ## Personal data
 
-Buyer phone numbers and identity live in Postgres, never on chain — there is
-no erasure remedy against a blockchain and this is personal data under the
-Data Protection Act 2019. The wallet addresses on chain are pseudonymous, but
-the address-to-person linkage in the buyers table makes them identifiable in
-combination, so that table is inside the same compliance boundary as the
-phone numbers. Register with the ODPC and document a lawful basis before
-holding register or director data at scale.
+Buyer phone numbers and identity information are stored in Postgres and never written to the blockchain.
+
+That distinction matters because blockchain data cannot simply be erased later.
+
+Wallet addresses are pseudonymous on chain, but once an address is connected to a buyer record in Postgres, the two can be used together to identify the person.
+
+For that reason, the buyer table and related identity data should be treated as part of the same compliance boundary as the phone numbers.
+
+Before using the system with real register or director data at scale, the production deployment should address the requirements of Kenya's Data Protection Act 2019, including registration with the ODPC where applicable and documenting the lawful basis for processing the data.
