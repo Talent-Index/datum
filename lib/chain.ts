@@ -174,18 +174,6 @@ export function chain(): Chain {
   });
 }
 
-export function escrowAddress(): Address {
-  return requireEnv("ESCROW_ADDRESS") as Address;
-}
-
-export function kesAddress(): Address {
-  return requireEnv("KES_ADDRESS") as Address;
-}
-
-export function developerAddress(): Address {
-  return requireEnv("DEVELOPER_ADDRESS") as Address;
-}
-
 export function publicClient(): PublicClient {
   return createPublicClient({ chain: chain(), transport: http() });
 }

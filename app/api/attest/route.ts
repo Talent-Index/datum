@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+
+import { isOperator } from "@/lib/auth";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 import { toHex } from "viem";
@@ -6,19 +8,21 @@ import { toHex } from "viem";
 import {
   WRITE_GAS,
   escrowAbi,
-  escrowAddress,
   platformWallet,
   publicClient,
   revertReason,
   surveyorWallet,
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { MILESTONES, PROJECT_ID, ensureProject } from "@/lib/project";
+import { isRemittance, resolveProject } from "@/lib/project";
 
 const bodySchema = z.object({ role: z.union([z.literal(1), z.literal(2)]) });
 
 /** Surveyor or platform signs. Two of three releases the funds. */
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!isOperator(request)) {
+    return NextResponse.json({ error: "Operator access required" }, { status: 401 });
+  }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json(
@@ -28,17 +32,28 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const role = parsed.data.role;
 
-  await ensureProject();
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
+  // On a remittance build attester 1 is the sender, who signs from their own
+  // page with their own session; the surveyor key is not on that contract.
+  if (role === 1 && isRemittance(project)) {
+    return NextResponse.json(
+      { error: "This project's second signature belongs to the sender; they approve from their page" },
+      { status: 400 },
+    );
+  }
 
   const chain = publicClient();
   const milestoneId = Number(
     await chain.readContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "nextMilestone",
     }),
   );
-  if (milestoneId >= MILESTONES.length) {
+  if (milestoneId >= project.milestones.length) {
     return NextResponse.json({ error: "All milestones complete" }, { status: 400 });
   }
 
@@ -49,7 +64,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     .from(schema.attestations)
     .where(
       and(
-        eq(schema.attestations.projectId, PROJECT_ID),
+        eq(schema.attestations.projectId, project.id),
         eq(schema.attestations.milestoneIndex, milestoneId),
         eq(schema.attestations.accepted, true),
       ),
@@ -61,7 +76,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const { client, account } = role === 1 ? surveyorWallet() : platformWallet();
     const hash = await client.writeContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "attest",
       args: [BigInt(milestoneId), role, evidenceHash],
@@ -72,7 +87,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     await publicClient().waitForTransactionReceipt({ hash });
 
     await db().insert(schema.attestations).values({
-      projectId: PROJECT_ID,
+      projectId: project.id,
       milestoneIndex: milestoneId,
       role,
       evidenceHash,

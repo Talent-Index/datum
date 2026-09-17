@@ -3,12 +3,13 @@ import sharp from "sharp";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { NextResponse } from "next/server";
+
+import { isOperator } from "@/lib/auth";
 import { toHex } from "viem";
 
 import {
   WRITE_GAS,
   escrowAbi,
-  escrowAddress,
   oracleWallet,
   publicClient,
   revertReason,
@@ -17,14 +18,7 @@ import { db, dbPool, schema } from "@/lib/db";
 import { stageClassifier } from "@/lib/evidence/classifier";
 import { PostgresSeenHashStore } from "@/lib/evidence/store";
 import { EvidenceVerifier, type Verdict } from "@/lib/evidence/verifier";
-import {
-  MILESTONES,
-  PROJECT_ID,
-  SITE_LAT,
-  SITE_LON,
-  SITE_NAME,
-  ensureProject,
-} from "@/lib/project";
+import { resolveProject } from "@/lib/project";
 
 /**
  * Developer uploads site photographs; the pipeline rules on them and, when
@@ -41,6 +35,9 @@ const MAX_UPLOAD_BYTES = 15 * 1024 * 1024;
 export const maxDuration = 60;
 
 export async function POST(request: Request): Promise<NextResponse> {
+  if (!isOperator(request)) {
+    return NextResponse.json({ error: "Operator access required" }, { status: 401 });
+  }
   const contentLength = Number.parseInt(request.headers.get("content-length") ?? "0", 10);
   if (contentLength > MAX_UPLOAD_BYTES) {
     return NextResponse.json(
@@ -68,20 +65,23 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
-  await ensureProject();
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
 
   const chain = publicClient();
   const milestoneId = Number(
     await chain.readContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "nextMilestone",
     }),
   );
-  if (milestoneId >= MILESTONES.length) {
+  if (milestoneId >= project.milestones.length) {
     return NextResponse.json({ error: "All milestones complete" }, { status: 400 });
   }
-  const claimedStage = MILESTONES[milestoneId]!.stage;
+  const claimedStage = project.milestones[milestoneId]!.stage;
 
   const dir = await mkdtemp(join(tmpdir(), "evidence-"));
   let verdict: Verdict;
@@ -104,7 +104,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     store = new PostgresSeenHashStore(dbPool());
     const verifier = new EvidenceVerifier(stageClassifier(), store);
     verdict = await verifier.verify(
-      { projectId: PROJECT_ID, name: SITE_NAME, latitude: SITE_LAT, longitude: SITE_LON },
+      { projectId: project.id, name: project.name, latitude: project.latitude, longitude: project.longitude },
       milestoneId,
       claimedStage,
       paths,
@@ -136,7 +136,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     try {
       const { client, account } = oracleWallet();
       const hash = await client.writeContract({
-        address: escrowAddress(),
+        address: project.contractAddress,
         abi: escrowAbi,
         functionName: "attest",
         args: [BigInt(milestoneId), 0, verdict.evidenceHash as `0x${string}`],
@@ -152,7 +152,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Release the hashes so the same photographs can be resubmitted once
       // the cause is fixed, rather than being rejected as duplicates forever.
       await store?.forget(
-        PROJECT_ID,
+        project.id,
         verdict.images.filter((i) => i.passed).map((i) => BigInt(`0x${i.phash}`)),
       );
       return NextResponse.json(
@@ -163,7 +163,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   await db().insert(schema.attestations).values({
-    projectId: PROJECT_ID,
+    projectId: project.id,
     milestoneIndex: milestoneId,
     role: 0,
     evidenceHash: verdict.accepted ? verdict.evidenceHash : toHex(new Uint8Array(32)),

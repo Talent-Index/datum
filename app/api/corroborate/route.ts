@@ -3,15 +3,7 @@ import { z } from "zod";
 
 import { corroborate } from "@/lib/data/corroborate";
 import { db, schema } from "@/lib/db";
-import {
-  DEVELOPER_NAME,
-  PROJECT_ID,
-  PROJECT_REF,
-  SITE_LAT,
-  SITE_LON,
-  SITE_NAME,
-  ensureProject,
-} from "@/lib/project";
+import { resolveProject } from "@/lib/project";
 
 const bodySchema = z.object({ developer: z.string().min(1).max(200).optional() });
 
@@ -24,16 +16,18 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.success) {
     return NextResponse.json({ error: "Body may name a developer" }, { status: 400 });
   }
-  const developer = parsed.data.developer ?? DEVELOPER_NAME;
-
-  await ensureProject();
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
+  const developer = parsed.data.developer ?? project.developerName;
 
   const result = await corroborate(
-    SITE_NAME,
+    project.name,
     developer,
-    SITE_LAT,
-    SITE_LON,
-    developer === DEVELOPER_NAME ? PROJECT_REF : null,
+    project.latitude,
+    project.longitude,
+    developer === project.developerName ? project.projectRef : null,
   );
 
   const wire = {
@@ -48,7 +42,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   };
 
   await db().insert(schema.corroborations).values({
-    projectId: PROJECT_ID,
+    projectId: project.id,
     developerName: developer,
     verdict: result.verdict,
     result: wire,

@@ -10,7 +10,8 @@
     "test:contracts": "forge test --root contracts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "warm": "tsx lib/data/warm.ts"
+    "warm": "tsx lib/data/warm.ts",
+    "artifacts": "forge build --root contracts && node scripts/artifacts.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",

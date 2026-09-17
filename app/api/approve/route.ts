@@ -1,17 +1,17 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import {
   WRITE_GAS,
   escrowAbi,
-  escrowAddress,
   publicClient,
   revertReason,
   senderWallet,
 } from "@/lib/chain";
+import { currentSender } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
-import { IS_REMITTANCE, PROJECT_ID, SENDER_PHONE, ensureProject } from "@/lib/project";
+import { isRemittance, resolveProject } from "@/lib/project";
 
 /**
  * The sender's decision on a milestone.
@@ -27,24 +27,39 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
-  if (!IS_REMITTANCE || !SENDER_PHONE) {
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
+  if (!isRemittance(project) || !project.senderPhone) {
     return NextResponse.json(
-      { error: "This project has no sender; a surveyor countersigns it. Set SENDER_PHONE." },
+      { error: "This project has no sender; a surveyor countersigns it" },
       { status: 400 },
     );
   }
 
+  // The second signature is the sender's alone. Anyone else with a session
+  // — another buyer, a curious visitor — is refused before the body is read.
+  const session = currentSender(request);
+  if (!session) {
+    return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  }
+  if (session.phone !== project.senderPhone) {
+    return NextResponse.json(
+      { error: "Only the sender on this project can approve or decline a milestone" },
+      { status: 403 },
+    );
+  }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Body must be { decision, reason? }" }, { status: 400 });
   }
   const { decision, reason } = parsed.data;
 
-  await ensureProject();
   const chain = publicClient();
   const milestoneId = Number(
     await chain.readContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "nextMilestone",
     }),
@@ -60,7 +75,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       evidenceHash: schema.attestations.evidenceHash,
     })
     .from(schema.attestations)
-    .where(eq(schema.attestations.role, 0))
+    .where(and(eq(schema.attestations.projectId, project.id), eq(schema.attestations.role, 0)))
     .orderBy(desc(schema.attestations.id))
     .limit(1);
 
@@ -77,7 +92,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (decision === "decline") {
     await db().insert(schema.attestations).values({
-      projectId: PROJECT_ID,
+      projectId: project.id,
       milestoneIndex: milestoneId,
       role: 1,
       evidenceHash: latest.evidenceHash,
@@ -97,9 +112,9 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let txHash: string;
   try {
-    const { client, account } = senderWallet(SENDER_PHONE);
+    const { client, account } = senderWallet(project.senderPhone);
     txHash = await client.writeContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "attest",
       args: [BigInt(milestoneId), 1, latest.evidenceHash as `0x${string}`],
@@ -116,7 +131,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   await db().insert(schema.attestations).values({
-    projectId: PROJECT_ID,
+    projectId: project.id,
     milestoneIndex: milestoneId,
     role: 1,
     evidenceHash: latest.evidenceHash,

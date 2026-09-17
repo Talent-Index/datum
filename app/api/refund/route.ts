@@ -1,34 +1,40 @@
 import { NextResponse } from "next/server";
+
+import { isOperator } from "@/lib/auth";
 import { eq } from "drizzle-orm";
 
 import {
   KES_UNITS,
   escrowAbi,
-  escrowAddress,
   kesAbi,
-  kesAddress,
   platformWallet,
   publicClient,
   revertReason,
   WRITE_GAS,
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { PROJECT_ID, ensureProject } from "@/lib/project";
+import { resolveProject } from "@/lib/project";
 
 /**
  * Every buyer takes their pro rata share of what is left. claimRefund is
  * callable by anyone and pays the buyer's address, so the platform can run
  * the sweep without holding any buyer key.
  */
-export async function POST(): Promise<NextResponse> {
-  await ensureProject();
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!isOperator(request)) {
+    return NextResponse.json({ error: "Operator access required" }, { status: 401 });
+  }
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
 
   const chain = publicClient();
-  const escrow = { address: escrowAddress(), abi: escrowAbi } as const;
+  const escrow = { address: project.contractAddress, abi: escrowAbi } as const;
   const buyers = await db()
     .select()
     .from(schema.buyers)
-    .where(eq(schema.buyers.projectId, PROJECT_ID));
+    .where(eq(schema.buyers.projectId, project.id));
 
   const paid: Array<{ phone: string; refund: number }> = [];
   for (const buyer of buyers) {
@@ -47,7 +53,7 @@ export async function POST(): Promise<NextResponse> {
     if (refunded) continue;
 
     const before = await chain.readContract({
-      address: kesAddress(),
+      address: project.kesAddress,
       abi: kesAbi,
       functionName: "balanceOf",
       args: [address],
@@ -67,7 +73,7 @@ export async function POST(): Promise<NextResponse> {
       return NextResponse.json({ error: revertReason(error) }, { status: 400 });
     }
     const after = await chain.readContract({
-      address: kesAddress(),
+      address: project.kesAddress,
       abi: kesAbi,
       functionName: "balanceOf",
       args: [address],

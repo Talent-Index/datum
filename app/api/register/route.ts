@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { buyerAccount, normaliseMsisdn } from "@/lib/chain";
+import { currentSender } from "@/lib/auth";
+import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
+import { resolveProject } from "@/lib/project";
 
 /**
  * A buyer signs up with a phone number and what they undertake to pay in
@@ -14,32 +15,34 @@ import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
  * payment onward.
  */
 const bodySchema = z.object({
-  phone: z
-    .string()
-    .trim()
-    .regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678"),
   commitmentKes: z.number().int().positive().max(1_000_000_000),
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
+  // The number is whatever the session proves, never what the body claims:
+  // a commitment in someone else's name is the fraud this exists to stop.
+  const session = currentSender(request);
+  if (!session) {
+    return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: parsed.error.issues[0]?.message ?? "Send { phone, commitmentKes }" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Send { commitmentKes }" }, { status: 400 });
   }
-  const phone = normaliseMsisdn(parsed.data.phone);
+  const phone = session.phone;
   const { commitmentKes } = parsed.data;
 
-  await ensureProject();
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
   const database = db();
   const address = buyerAccount(phone).address;
 
   const existing = await database
     .select({ id: schema.buyers.id, walletAddress: schema.buyers.walletAddress })
     .from(schema.buyers)
-    .where(eq(schema.buyers.phone, phone));
+    .where(and(eq(schema.buyers.projectId, project.id), eq(schema.buyers.phone, phone)));
 
   if (existing.length) {
     // Re-registering revises the commitment rather than creating a second
@@ -47,10 +50,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     await database
       .update(schema.buyers)
       .set({ commitmentKes })
-      .where(eq(schema.buyers.phone, phone));
+      .where(and(eq(schema.buyers.projectId, project.id), eq(schema.buyers.phone, phone)));
   } else {
     await database.insert(schema.buyers).values({
-      projectId: PROJECT_ID,
+      projectId: project.id,
       phone,
       walletAddress: address,
       commitmentKes,
@@ -65,7 +68,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     address: existing[0]?.walletAddress ?? address,
     commitmentKes,
     message:
-      `${phone} registered for ${SITE_NAME} with a commitment of ` +
+      `${phone} registered for ${project.name} with a commitment of ` +
       `KES ${commitmentKes.toLocaleString("en-US")}. Deposit in instalments; ` +
       `each one is held in escrow and released only against verified construction.`,
   });

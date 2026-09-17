@@ -1,35 +1,24 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { toHex } from "viem";
 
-import {
-  KES_UNITS,
-  developerAddress,
-  escrowAbi,
-  escrowAddress,
-  kesAbi,
-  kesAddress,
-  publicClient,
-} from "@/lib/chain";
+import { KES_UNITS, escrowAbi, kesAbi, publicClient } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import {
-  DEVELOPER_NAME,
-  FUNDING_TARGET_KES,
-  IS_REMITTANCE,
-  SENDER_PHONE,
-  MILESTONES,
-  PROJECT_ID,
-  ROLE_NAMES,
-  SITE_NAME,
-  ensureProject,
-} from "@/lib/project";
+import { isRemittance, resolveProject, roleNames } from "@/lib/project";
 
 /** What a buyer, the platform, and a judge all look at: the live project. */
-export async function GET(): Promise<NextResponse> {
-  await ensureProject();
+export async function GET(request: Request): Promise<NextResponse> {
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json(
+      { error: "Specify ?project=<id>; more than one project exists" },
+      { status: 400 },
+    );
+  }
+  const ROLE_NAMES = roleNames(project);
 
   const chain = publicClient();
-  const escrow = { address: escrowAddress(), abi: escrowAbi } as const;
+  const escrow = { address: project.contractAddress, abi: escrowAbi } as const;
 
   const [totalDeposited, totalReleased, held, nextMilestone, statusCode, developerBalance] =
     await Promise.all([
@@ -39,10 +28,10 @@ export async function GET(): Promise<NextResponse> {
       chain.readContract({ ...escrow, functionName: "nextMilestone" }),
       chain.readContract({ ...escrow, functionName: "status" }),
       chain.readContract({
-        address: kesAddress(),
+        address: project.kesAddress,
         abi: kesAbi,
         functionName: "balanceOf",
-        args: [developerAddress()],
+        args: [project.developerAddress],
       }),
     ]);
   const status = (["Active", "Stalled", "Completed"] as const)[Number(statusCode)] ?? "Active";
@@ -50,7 +39,7 @@ export async function GET(): Promise<NextResponse> {
 
   const zeroHash = toHex(new Uint8Array(32));
   const milestones = await Promise.all(
-    MILESTONES.map(async (definition, id) => {
+    project.milestones.map(async (definition, id) => {
       const [description, percent, cumulative, evidenceHash, approvals, released] =
         await chain.readContract({ ...escrow, functionName: "milestones", args: [BigInt(id)] });
       const signers: string[] = [];
@@ -80,7 +69,7 @@ export async function GET(): Promise<NextResponse> {
   const buyerRows = await db()
     .select()
     .from(schema.buyers)
-    .where(eq(schema.buyers.projectId, PROJECT_ID));
+    .where(eq(schema.buyers.projectId, project.id));
   const buyers = (
     await Promise.all(
       buyerRows.map(async (buyer) => {
@@ -113,17 +102,19 @@ export async function GET(): Promise<NextResponse> {
   const lastOracle = await db()
     .select({ verdict: schema.attestations.verdict })
     .from(schema.attestations)
-    .where(eq(schema.attestations.role, 0))
+    .where(and(eq(schema.attestations.projectId, project.id), eq(schema.attestations.role, 0)))
     .orderBy(desc(schema.attestations.id))
     .limit(1);
   const lastCorroboration = await db()
     .select({ result: schema.corroborations.result })
     .from(schema.corroborations)
+    .where(eq(schema.corroborations.projectId, project.id))
     .orderBy(desc(schema.corroborations.id))
     .limit(1);
 
   return NextResponse.json({
-    site: SITE_NAME,
+    project: project.id,
+    site: project.name,
     status,
     total_deposited: Number(totalDeposited / KES_UNITS),
     total_released: Number(totalReleased / KES_UNITS),
@@ -134,18 +125,18 @@ export async function GET(): Promise<NextResponse> {
     buyers,
     last_verdict: lastOracle[0]?.verdict ?? null,
     corroboration: lastCorroboration[0]?.result ?? null,
-    developer_name: DEVELOPER_NAME,
-    funding_target: FUNDING_TARGET_KES,
-    is_remittance: IS_REMITTANCE,
-    sender_phone: SENDER_PHONE,
+    developer_name: project.developerName,
+    funding_target: project.fundingTargetKes ?? 0,
+    is_remittance: isRemittance(project),
+    sender_phone: project.senderPhone,
     // The sender is asked to decide only once the pipeline has accepted the
     // photographs and their own signature is still outstanding.
     awaiting_sender:
-      IS_REMITTANCE &&
+      isRemittance(project) &&
       status === "Active" &&
       (lastOracle[0]?.verdict as { accepted?: boolean } | null)?.accepted === true &&
       milestones[next]?.approvals === 1 &&
       !milestones[next]?.signers.includes("Sender"),
-    contract: escrowAddress(),
+    contract: project.contractAddress,
   });
 }

@@ -1,13 +1,12 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { normaliseMsisdn } from "@/lib/chain";
+import { currentSender } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { stkPush } from "@/lib/daraja";
-import { PROJECT_ID, SITE_NAME, ensureProject } from "@/lib/project";
+import { resolveProject } from "@/lib/project";
 
 const bodySchema = z.object({
-  phone: z.string().min(9).max(15),
   kes: z.number().int().positive(),
 });
 
@@ -18,22 +17,26 @@ const bodySchema = z.object({
  * on the callback, never here.
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  const session = currentSender(request);
+  if (!session) {
+    return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
-    return NextResponse.json(
-      { error: "Body must be { phone, kes } with a positive integer amount" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: "Body must be { kes } with a positive integer" }, { status: 400 });
   }
   const { kes } = parsed.data;
-  // Stored canonically so the callback resolves the same buyer either way.
-  const phone = normaliseMsisdn(parsed.data.phone);
+  // The prompt goes to the number the session proves — already canonical.
+  const phone = session.phone;
 
-  await ensureProject();
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
 
   let push;
   try {
-    push = await stkPush(phone, kes, "WILLOWPARKA");
+    push = await stkPush(phone, kes, project.id.toUpperCase());
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "STK push failed" },
@@ -44,7 +47,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   await db().insert(schema.pendingPayments).values({
     checkoutRequestId: push.CheckoutRequestID,
     merchantRequestId: push.MerchantRequestID,
-    projectId: PROJECT_ID,
+    projectId: project.id,
     phone,
     amountKes: kes,
     status: "pending",
@@ -55,7 +58,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     checkoutRequestId: push.CheckoutRequestID,
     sms:
       `Payment request sent to ${phone}. Once confirmed, KES ${kes.toLocaleString("en-US")} ` +
-      `is held in escrow for ${SITE_NAME}. It is released to the developer only as ` +
+      `is held in escrow for ${project.name}. It is released to the developer only as ` +
       `construction is verified.`,
   });
 }

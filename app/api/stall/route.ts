@@ -1,24 +1,33 @@
 import { NextResponse } from "next/server";
 
+import { isOperator } from "@/lib/auth";
+
 import {
   WRITE_GAS,
   escrowAbi,
-  escrowAddress,
   platformWallet,
   publicClient,
   revertReason,
 } from "@/lib/chain";
+import { resolveProject } from "@/lib/project";
 
 /**
  * The platform declaring a stall is one path; after the timeout any buyer
  * can reach the same function directly on chain without this API — that
  * escape hatch deliberately does not depend on the platform being alive.
  */
-export async function POST(): Promise<NextResponse> {
+export async function POST(request: Request): Promise<NextResponse> {
+  if (!isOperator(request)) {
+    return NextResponse.json({ error: "Operator access required" }, { status: 401 });
+  }
+  const project = await resolveProject(request);
+  if (!project) {
+    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+  }
   try {
     const { client, account } = platformWallet();
     const hash = await client.writeContract({
-      address: escrowAddress(),
+      address: project.contractAddress,
       abi: escrowAbi,
       functionName: "declareStalled",
       account,
