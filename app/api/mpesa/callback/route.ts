@@ -1,25 +1,18 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 
-import {
-  KES_UNITS,
-  buyerAccount,
-  normaliseMsisdn,
-  escrowAbi,
-  escrowAddress,
-  platformWallet,
-  publicClient,
-  revertReason,
-  WRITE_GAS,
-} from "@/lib/chain";
 import { callbackSchema } from "@/lib/daraja";
 import { db, schema } from "@/lib/db";
+import { creditPayment } from "@/lib/payments";
 
 /**
  * Daraja confirmation. Safaricom retries deliveries, so this handler is
  * idempotent on CheckoutRequestID: only a row still in 'pending' is acted
  * on, and every delivery is acknowledged with ResultCode 0 — a non-zero
  * acknowledgement only triggers more retries, never a correction.
+ *
+ * The endpoint is public and unsigned, so a success here is a claim, not a
+ * fact. Nothing is credited until creditPayment has asked Safaricom directly.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const ack = NextResponse.json({ ResultCode: 0, ResultDesc: "Accepted" });
@@ -68,68 +61,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     (item: { Name: string; Value?: string | number }) => item.Name === "MpesaReceiptNumber",
   )?.Value;
 
-  // A buyer who registered a commitment already has a wallet. Re-deriving
-  // here would strand this instalment at a second address, so the stored one
-  // wins and derivation is only for a buyer paying without registering.
-  const phone = normaliseMsisdn(payment.phone);
-  const existing = await database
-    .select({ walletAddress: schema.buyers.walletAddress })
-    .from(schema.buyers)
-    .where(eq(schema.buyers.phone, phone));
-  const walletAddress =
-    existing[0]?.walletAddress ?? (buyerAccount(phone).address as string);
-  if (!existing.length) {
-    await database
-      .insert(schema.buyers)
-      .values({ projectId: payment.projectId, phone, walletAddress })
-      .onConflictDoNothing();
+  const outcome = await creditPayment(payment.id, typeof receipt === "string" ? receipt : undefined);
+  if (outcome.status === "failed") {
+    console.error(`[mpesa/callback] ${payment.checkoutRequestId}: ${outcome.reason}`);
   }
-
-  try {
-    const { client, account: platform } = platformWallet();
-    const hash = await client.writeContract({
-      address: escrowAddress(),
-      abi: escrowAbi,
-      functionName: "depositFor",
-      args: [walletAddress as `0x${string}`, BigInt(payment.amountKes) * KES_UNITS],
-      account: platform,
-      chain: client.chain,
-      gas: WRITE_GAS,
-    });
-    await publicClient().waitForTransactionReceipt({ hash });
-
-    await database
-      .update(schema.pendingPayments)
-      .set({
-        status: "confirmed",
-        mpesaReceipt: typeof receipt === "string" ? receipt : null,
-        depositTxHash: hash,
-        completedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(schema.pendingPayments.id, payment.id),
-          eq(schema.pendingPayments.status, "pending"),
-        ),
-      );
-  } catch (error) {
-    // The M-Pesa money is in; the claim is not. The row records the failure
-    // so operations can replay the deposit — never drop it silently.
-    await database
-      .update(schema.pendingPayments)
-      .set({
-        status: "failed",
-        resultDescription: `deposit transaction failed: ${revertReason(error)}`,
-        completedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(schema.pendingPayments.id, payment.id),
-          eq(schema.pendingPayments.status, "pending"),
-        ),
-      );
-    console.error(`[mpesa/callback] depositFor failed: ${revertReason(error)}`);
-  }
-
   return ack;
 }

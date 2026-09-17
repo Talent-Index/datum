@@ -155,3 +155,52 @@ export async function stkPush(
   }
   return stkResponseSchema.parse(await response.json());
 }
+
+const queryResponseSchema = z.object({
+  ResponseCode: z.string().optional(),
+  ResultCode: z.string().optional(),
+  ResultDesc: z.string().optional(),
+  errorMessage: z.string().optional(),
+});
+
+export type StkQueryResult =
+  | { state: "paid" }
+  | { state: "failed"; reason: string }
+  | { state: "processing" };
+
+/**
+ * Ask Safaricom directly whether a push was paid. The callback endpoint is
+ * public and unsigned — anyone who has seen a CheckoutRequestID could post a
+ * forged success — so money is only credited once this query, which runs
+ * over our own authenticated channel, agrees.
+ */
+export async function stkQuery(checkoutRequestId: string): Promise<StkQueryResult> {
+  const config = darajaConfig();
+  const token = await accessToken(config);
+  const ts = timestamp();
+  const password = Buffer.from(`${config.shortcode}${config.passkey}${ts}`).toString("base64");
+
+  const response = await fetch(`${config.baseUrl}/mpesa/stkpushquery/v1/query`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      BusinessShortCode: config.shortcode,
+      Password: password,
+      Timestamp: ts,
+      CheckoutRequestID: checkoutRequestId,
+    }),
+  });
+  const body = queryResponseSchema.safeParse(await response.json().catch(() => null));
+  if (!body.success) return { state: "processing" };
+
+  // Safaricom answers "being processed" with an error body for a short
+  // while after the push; that is not a failure, only not yet an answer.
+  if (body.data.errorMessage?.toLowerCase().includes("being processed")) {
+    return { state: "processing" };
+  }
+  if (body.data.ResultCode === "0") return { state: "paid" };
+  if (body.data.ResultCode !== undefined) {
+    return { state: "failed", reason: body.data.ResultDesc ?? `ResultCode ${body.data.ResultCode}` };
+  }
+  return { state: "processing" };
+}
