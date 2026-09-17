@@ -218,6 +218,36 @@ Once payment is confirmed, the settlement wallet calls `depositFor` to mint the 
 
 If the chain transaction fails, the failure is recorded against the payment row so it can be replayed later. It is never silently discarded.
 
+## Who may do what
+
+There are two kinds of session. Both are HMAC-signed cookies under `SESSION_SECRET`.
+
+A buyer or sender proves their M-Pesa number with a six-digit code: `/api/auth/otp` sends it and `/api/auth/verify` checks it. Codes live five minutes, allow five attempts, and are issued at most once a minute per number. Registering, paying and approving a milestone then act for that number only; no request body carries a phone.
+
+Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are set. Without them the code is written to the server log, which is enough for a demo.
+
+An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorization: Bearer` on the API or through `/api/auth/operator` for a cookie. Submitting evidence, countersigning, stalling, refunding, creating a project and replaying payments all require it.
+
+Reads are open: `/api/state`, `/api/projects` and `/api/health`.
+
+## Projects
+
+A project is a database row, not a deployment.
+
+`POST /api/projects` deploys a settlement token and an escrow carrying that project's milestones and attesters, mints the settlement float, and writes the addresses to the row. The register page has the form.
+
+Every other route takes `?project=<id>`. When exactly one project exists the parameter can be omitted, so a single-site install and the curl examples keep working.
+
+Setting a sender number at creation makes it a remittance build: that number's managed wallet becomes attester 1 and is given a little AVAX so its approvals pay their own gas.
+
+## Operations
+
+`/api/ops/replay` re-checks every instalment left `verifying`, `pending` for more than three minutes, or `failed` after a chain write. Each is queried against Safaricom's status endpoint and credited if it was paid.
+
+Vercel's cron calls it once a day, which is the Hobby plan's limit, with `CRON_SECRET`. An operator can call it at any time and should after any Safaricom outage.
+
+`/api/health` reports the database, the RPC and each project's contract separately, so an alert names what fell over.
+
 ## Differences from the reference implementation
 
 There are a few intentional differences.
@@ -275,13 +305,33 @@ The current managed wallets are seed-derived.
 
 For production, custody should move behind a KMS or embedded-wallet provider through `buyerAccount()`.
 
+### Settlement
+
+Settlement is a mock shilling token on Fuji, minted to the platform wallet as float.
+
+Real money would need a licensed e-money or trust arrangement behind `depositFor`, and a payout rail from the developer's address back to a bank account. Neither is something this repository can supply.
+
+### Production M-Pesa
+
+M-Pesa runs against the Daraja sandbox. Going live is a Safaricom onboarding with a paybill, not a code change.
+
+### Authoritative records
+
+The public-record check reads cached snapshots of the NCA register, the Gazette and EBK projects. Live fetching is wired but rate-limited.
+
+None of those registers is authoritative for land title. That stays a Lands Registry search done by a person.
+
+### Regulatory standing
+
+Holding buyers' money in escrow is regulated activity in Kenya. This is an MVP for demonstration, not a licensed service.
+
 ## Demo console
 
 The demo console uses real image uploads rather than canned fraud scenarios.
 
 There is deliberately no `/api/reset`.
 
-On a persistent chain, resetting the system means deploying a fresh contract and pointing `ESCROW_ADDRESS` to the new deployment.
+On a persistent chain, resetting the system means creating a new project, which deploys a fresh escrow.
 
 ## Personal data
 
