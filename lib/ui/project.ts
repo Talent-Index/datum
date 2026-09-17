@@ -54,6 +54,7 @@ export interface Corroboration {
 }
 
 export interface ProjectState {
+  project: string;
   site: string;
   status: "Active" | "Stalled" | "Completed";
   total_deposited: number;
@@ -73,6 +74,21 @@ export interface ProjectState {
   contract: string;
 }
 
+export interface ProjectSummary {
+  id: string;
+  name: string;
+  developer_name: string;
+  contract: string;
+  is_remittance: boolean;
+  funding_target: number;
+  milestones: number;
+}
+
+export interface Session {
+  sender: { phone: string; expiresAt: number } | null;
+  operator: boolean;
+}
+
 export const kes = (n: number) => `KES ${n.toLocaleString("en-US")}`;
 
 /**
@@ -85,8 +101,21 @@ export function asMsisdn(raw: string): string {
   return digits.startsWith("254") ? digits : `254${digits.replace(/^0/, "")}`;
 }
 
+/** The project this page is about, from ?project= on the address bar. */
+export function currentProjectId(): string | null {
+  if (typeof window === "undefined") return null;
+  return new URLSearchParams(window.location.search).get("project");
+}
+
+/** Append ?project= so every call lands on the same project the page shows. */
+export function api(path: string): string {
+  const id = currentProjectId();
+  if (!id || path.includes("?")) return path;
+  return `${path}?project=${encodeURIComponent(id)}`;
+}
+
 export async function call(path: string, body?: unknown): Promise<Record<string, unknown>> {
-  const response = await fetch(path, {
+  const response = await fetch(api(path), {
     method: "POST",
     headers: body instanceof FormData ? {} : { "Content-Type": "application/json" },
     body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
@@ -124,7 +153,7 @@ export function useProject(): ProjectHandle {
 
   const refresh = useCallback(async () => {
     try {
-      const response = await fetch("/api/state", { cache: "no-store" });
+      const response = await fetch(api("/api/state"), { cache: "no-store" });
       const data = (await response.json()) as ProjectState & { error?: string };
       if (!response.ok) throw new Error(data.error ?? "State unavailable");
       setState(data);
@@ -158,4 +187,46 @@ export function useProject(): ProjectHandle {
   );
 
   return { state, loadError, toast, busy, showToast, act, refresh };
+}
+
+/** Who the browser is signed in as; null until the first answer arrives. */
+export function useSession(): { session: Session | null; refreshSession: () => Promise<void> } {
+  const [session, setSession] = useState<Session | null>(null);
+  const refreshSession = useCallback(async () => {
+    try {
+      const response = await fetch("/api/auth/me", { cache: "no-store" });
+      if (response.ok) setSession((await response.json()) as Session);
+    } catch {
+      // A failed lookup leaves the previous answer standing; the next poll retries.
+    }
+  }, []);
+  useEffect(() => {
+    void refreshSession();
+  }, [refreshSession]);
+  return { session, refreshSession };
+}
+
+/** Every project on the platform, for the picker. */
+export function useProjects(): ProjectSummary[] {
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/projects", { cache: "no-store" });
+        if (!response.ok) return;
+        const data = (await response.json()) as { projects: ProjectSummary[] };
+        setProjects(data.projects);
+      } catch {
+        // The picker simply stays empty; the page still shows the default project.
+      }
+    })();
+  }, []);
+  return projects;
+}
+
+/** Change the project the page shows. A full navigation keeps every panel in step. */
+export function switchProject(id: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("project", id);
+  window.location.assign(url.toString());
 }

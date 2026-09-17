@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
-import { asMsisdn, call, kes, useProject } from "@/lib/ui/project";
+import { asMsisdn, call, kes, useProject, useSession } from "@/lib/ui/project";
 
 const CHECK_LABELS: Record<string, string> = {
   location: "at your plot",
@@ -14,38 +14,60 @@ const CHECK_LABELS: Record<string, string> = {
 
 /**
  * The buyer's page. Written for someone putting money into a house that does
- * not exist yet, so it carries only what they act on — a commitment and
- * instalments against it — and none of the operator's controls.
+ * not exist yet, so it carries only what they act on: proving their number,
+ * a commitment, instalments against it, and on a remittance build the
+ * approval of each milestone. None of the operator's controls live here.
  */
 export default function Buy() {
   const { state, loadError, toast, busy, showToast, act } = useProject();
-  const [regPhone, setRegPhone] = useState("");
+  const { session, refreshSession } = useSession();
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
+  const [codeSent, setCodeSent] = useState(false);
   const [commitment, setCommitment] = useState("2000000");
   const [amount, setAmount] = useState("50000");
-  const [activeBuyer, setActiveBuyer] = useState<string | null>(null);
 
-  const buyerKey = activeBuyer ?? (regPhone.trim() ? asMsisdn(regPhone) : null);
-  const me = buyerKey
-    ? (state?.buyers.find((b) => asMsisdn(b.phone) === buyerKey) ?? null)
+  const signedIn = session?.sender?.phone ?? null;
+  const me = signedIn
+    ? (state?.buyers.find((b) => asMsisdn(b.phone) === asMsisdn(signedIn)) ?? null)
     : null;
   const over = state ? state.status !== "Active" : true;
+  const isSender =
+    !!signedIn && !!state?.sender_phone && asMsisdn(signedIn) === asMsisdn(state.sender_phone);
+
+  const sendCode = () =>
+    act("otp", async () => {
+      const result = await call("/api/auth/otp", { phone: phone.trim() });
+      setCodeSent(true);
+      showToast(String(result.message ?? "Code sent. Check your phone."));
+    });
+
+  const verifyCode = () =>
+    act("verify", async () => {
+      await call("/api/auth/verify", { phone: phone.trim(), code: code.trim() });
+      setCode("");
+      setCodeSent(false);
+      await refreshSession();
+      showToast("Number verified. You can register and pay from here.");
+    });
+
+  const signOut = () =>
+    act("logout", async () => {
+      await call("/api/auth/logout");
+      await refreshSession();
+    });
 
   const register = () =>
     act("register", async () => {
       const result = await call("/api/register", {
-        phone: regPhone.trim(),
         commitmentKes: Number.parseInt(commitment, 10),
       });
-      setActiveBuyer(result.phone as string);
       showToast(result.message as string);
     });
 
   const payInstalment = () =>
     act("deposit", async () => {
-      const result = await call("/api/deposit", {
-        phone: (activeBuyer ?? regPhone).trim(),
-        kes: Number.parseInt(amount, 10),
-      });
+      const result = await call("/api/deposit", { kes: Number.parseInt(amount, 10) });
       showToast(String(result.sms ?? "Check your phone for the M-Pesa prompt."));
     });
 
@@ -61,26 +83,37 @@ export default function Buy() {
   return (
     <div className="wrap">
       <header className="masthead">
-        <h1>Buy into {state?.site ?? "this development"}</h1>
+        <h1>
+          {state?.is_remittance ? "Fund your build at" : "Buy into"}{" "}
+          {state?.site ?? "this development"}
+        </h1>
         <div className="meta">
           <span>
-            Developer <b>{state?.developer_name ?? "—"}</b>
+            {state?.is_remittance ? "Builder" : "Developer"} <b>{state?.developer_name ?? "—"}</b>
           </span>
           <span>
             Status <b>{state?.status ?? "—"}</b>
           </span>
+          {signedIn && (
+            <span>
+              Signed in as <b>{signedIn}</b>{" "}
+              <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>
+                sign out
+              </a>
+            </span>
+          )}
           <span>
-            <Link href="/">View the drawdown register →</Link>
+            <Link href={state ? `/?project=${state.project}` : "/"}>View the drawdown register →</Link>
           </span>
         </div>
       </header>
 
       <section className="explainer">
         <p className="lede">
-          Your money is not paid to the developer. It is held in escrow and released to them only
-          when construction has been photographed, checked, and signed off by two independent
-          parties. If the site goes quiet for 30 days, whatever has not been released comes back to
-          you.
+          Your money is not paid to the {state?.is_remittance ? "builder" : "developer"}. It is
+          held in escrow and released only when construction has been photographed, checked, and
+          signed off by two independent parties. If the site goes quiet for 30 days, whatever has
+          not been released comes back to you.
         </p>
       </section>
 
@@ -89,53 +122,99 @@ export default function Buy() {
 
       <div className="cols">
         <div>
-          <section className="panel">
-            <h2>
-              <span>1 — Your commitment</span>
-              <span>No money moves yet</span>
-            </h2>
-            <div className="body">
-              <p>
-                Tell us the number you pay from and what you intend to commit in total. You will not
-                be asked for a wallet, a password, or a seed phrase — the escrow account is managed
-                for you and the refund goes back to this number.
-              </p>
-              <div className="row">
-                <div>
-                  <label htmlFor="regphone">M-Pesa number</label>
-                  <input
-                    id="regphone"
-                    placeholder="07XX XXX XXX"
-                    value={regPhone}
-                    onChange={(e) => setRegPhone(e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label htmlFor="commitment">Committing (KES)</label>
-                  <input
-                    id="commitment"
-                    type="number"
-                    step={100000}
-                    value={commitment}
-                    onChange={(e) => setCommitment(e.target.value)}
-                  />
-                </div>
-              </div>
-              <button onClick={register} disabled={over || busy !== null}>
-                {busy === "register" ? "Registering…" : "Register my commitment"}
-              </button>
-              {!me && (
-                <p className="hint">
-                  Once registered, your instalment panel appears below for this number.
+          {!signedIn && (
+            <section className="panel">
+              <h2>
+                <span>1 — Prove your number</span>
+                <span>One-time code by SMS</span>
+              </h2>
+              <div className="body">
+                <p>
+                  Everything here is tied to the M-Pesa number you pay from. We send a six-digit
+                  code to it; nothing else is asked of you. No wallet, no password, no seed phrase.
                 </p>
-              )}
-            </div>
-          </section>
+                <div className="row">
+                  <div>
+                    <label htmlFor="phone">M-Pesa number</label>
+                    <input
+                      id="phone"
+                      placeholder="07XX XXX XXX"
+                      value={phone}
+                      onChange={(e) => setPhone(e.target.value)}
+                      disabled={codeSent}
+                    />
+                  </div>
+                  {codeSent && (
+                    <div>
+                      <label htmlFor="code">Code from SMS</label>
+                      <input
+                        id="code"
+                        inputMode="numeric"
+                        placeholder="123456"
+                        value={code}
+                        onChange={(e) => setCode(e.target.value)}
+                      />
+                    </div>
+                  )}
+                </div>
+                <div className="btns">
+                  {codeSent ? (
+                    <>
+                      <button onClick={verifyCode} disabled={busy !== null || code.length !== 6}>
+                        {busy === "verify" ? "Checking…" : "Verify"}
+                      </button>
+                      <button className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>
+                        Change number
+                      </button>
+                    </>
+                  ) : (
+                    <button onClick={sendCode} disabled={busy !== null || !phone.trim()}>
+                      {busy === "otp" ? "Sending…" : "Send me a code"}
+                    </button>
+                  )}
+                </div>
+                <p className="hint">Codes expire after five minutes. Ask for another after a minute.</p>
+              </div>
+            </section>
+          )}
+
+          {signedIn && (
+            <section className="panel">
+              <h2>
+                <span>{me?.commitment ? "Your commitment" : "2 — Your commitment"}</span>
+                <span>{me?.commitment ? kes(me.commitment) : "No money moves yet"}</span>
+              </h2>
+              <div className="body">
+                <p>
+                  Tell us what you intend to put in altogether. The escrow account is managed for
+                  you and any refund goes back to {signedIn}.
+                </p>
+                <label htmlFor="commitment">Committing (KES)</label>
+                <input
+                  id="commitment"
+                  type="number"
+                  step={100000}
+                  value={commitment}
+                  onChange={(e) => setCommitment(e.target.value)}
+                />
+                <button onClick={register} disabled={over || busy !== null}>
+                  {busy === "register"
+                    ? "Registering…"
+                    : me?.commitment
+                      ? "Update my commitment"
+                      : "Register my commitment"}
+                </button>
+                {!me && (
+                  <p className="hint">Once registered, your instalment panel appears below.</p>
+                )}
+              </div>
+            </section>
+          )}
 
           {me && (
             <section className="panel">
               <h2>
-                <span>2 — Pay an instalment</span>
+                <span>3 — Pay an instalment</span>
                 <span>{me.phone}</span>
               </h2>
               <div className="body">
@@ -191,13 +270,14 @@ export default function Buy() {
           {state?.awaiting_sender && state.last_verdict && (
             <section className="panel decide">
               <h2>
-                <span>Your approval is needed</span>
+                <span>{isSender ? "Your approval is needed" : "Waiting for the sender"}</span>
                 <span>{state.milestones.find((m) => m.current)?.description ?? ""}</span>
               </h2>
               <div className="body">
                 <p>
-                  The builder says this milestone is done and the photographs passed every
-                  check. Nothing is released until you say so — look at them and decide.
+                  {isSender
+                    ? "The builder says this milestone is done and the photographs passed every check. Nothing is released until you say so. Look at them and decide."
+                    : `The photographs passed every check. ${state.sender_phone ?? "The sender"} has to approve before anything is released.`}
                 </p>
                 {state.last_verdict.images.map((image) => (
                   <div className="img" key={image.filename}>
@@ -217,22 +297,26 @@ export default function Buy() {
                     </div>
                   </div>
                 ))}
-                <div className="btns">
-                  <button onClick={() => decide("approve")} disabled={busy !== null}>
-                    {busy === "approve" ? "Releasing…" : "Approve and release"}
-                  </button>
-                  <button
-                    className="danger"
-                    onClick={() => decide("decline")}
-                    disabled={busy !== null}
-                  >
-                    Not satisfied
-                  </button>
-                </div>
-                <p className="hint">
-                  Approving releases only this milestone&apos;s share. The rest of your money
-                  stays in escrow until the next stage is proven.
-                </p>
+                {isSender && (
+                  <>
+                    <div className="btns">
+                      <button onClick={() => decide("approve")} disabled={busy !== null}>
+                        {busy === "approve" ? "Releasing…" : "Approve and release"}
+                      </button>
+                      <button
+                        className="danger"
+                        onClick={() => decide("decline")}
+                        disabled={busy !== null}
+                      >
+                        Not satisfied
+                      </button>
+                    </div>
+                    <p className="hint">
+                      Approving releases only this milestone&apos;s share. The rest of your money
+                      stays in escrow until the next stage is proven.
+                    </p>
+                  </>
+                )}
               </div>
             </section>
           )}
@@ -261,7 +345,9 @@ export default function Buy() {
                   </tbody>
                 </table>
               ) : (
-                <p className="empty">Register above to see your position.</p>
+                <p className="empty">
+                  {signedIn ? "Register above to see your position." : "Verify your number to see your position."}
+                </p>
               )}
             </div>
           </section>
@@ -330,7 +416,7 @@ export default function Buy() {
       <footer>
         <span>Your deposit is held in escrow, not by the developer</span>
         <span>
-          <Link href="/">Drawdown register</Link>
+          <Link href={state ? `/?project=${state.project}` : "/"}>Drawdown register</Link>
         </span>
       </footer>
     </div>

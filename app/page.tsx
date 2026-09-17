@@ -3,14 +3,21 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
-import { call, kes, useProject, type Verdict } from "@/lib/ui/project";
+import {
+  call,
+  kes,
+  switchProject,
+  useProject,
+  useProjects,
+  useSession,
+  type Verdict,
+} from "@/lib/ui/project";
 
 /**
  * The drawdown register: the same document a bank and a quantity surveyor
  * would both recognise. Masthead, the milestone band, the figures row, then
- * the working panels. Ported from the reference console with the same
- * information architecture; the evidence panel takes real uploads instead
- * of canned scenarios.
+ * the working panels. Anyone can read it; only a signed-in operator can
+ * submit evidence, countersign, stall, refund, or open a new project.
  */
 
 const CHECK_LABELS: Record<string, string> = {
@@ -20,17 +27,61 @@ const CHECK_LABELS: Record<string, string> = {
   stage: "stage match",
 };
 
-const DEVELOPERS = [
-  "Willow Park Developments Ltd",
+const OTHER_DEVELOPERS = [
   "Athi Ridge Properties Ltd",
   "Kilimani Heights Ltd",
   "Backstreet Homes Ltd",
 ];
 
+const STAGES = ["site_clearing", "foundation", "ground_slab", "superstructure", "roofing", "finishing"];
+
+const MILESTONE_TEMPLATE = [
+  "Foundation complete | foundation | 20",
+  "Ground floor slab | ground_slab | 20",
+  "Superstructure to roof level | superstructure | 25",
+  "Roof on | roofing | 20",
+  "Finishes complete | finishing | 15",
+].join("\n");
+
 export default function Console() {
   const { state, loadError, toast, busy, showToast, act } = useProject();
-  const [developer, setDeveloper] = useState(DEVELOPERS[0]!);
+  const { session, refreshSession } = useSession();
+  const projects = useProjects();
+  const [developer, setDeveloper] = useState<string>("");
+  const [secret, setSecret] = useState("");
   const filesRef = useRef<HTMLInputElement>(null);
+
+  const [np, setNp] = useState({
+    id: "",
+    name: "",
+    developerName: "",
+    projectRef: "",
+    latitude: "-1.2921",
+    longitude: "36.7827",
+    developerAddress: "",
+    senderPhone: "",
+    fundingTargetKes: "",
+    milestones: MILESTONE_TEMPLATE,
+  });
+  const field = (k: keyof typeof np) => (e: { target: { value: string } }) =>
+    setNp((v) => ({ ...v, [k]: e.target.value }));
+
+  const operator = session?.operator ?? false;
+  const developerChoice = developer || state?.developer_name || "";
+
+  const signIn = () =>
+    act("login", async () => {
+      await call("/api/auth/operator", { secret });
+      setSecret("");
+      await refreshSession();
+      showToast("Operator controls unlocked.");
+    });
+
+  const signOut = () =>
+    act("logout", async () => {
+      await call("/api/auth/logout");
+      await refreshSession();
+    });
 
   const submitEvidence = () =>
     act("evidence", async () => {
@@ -53,7 +104,7 @@ export default function Console() {
 
   const corroborateNow = () =>
     act("corr", async () => {
-      const result = await call("/api/corroborate", { developer });
+      const result = await call("/api/corroborate", { developer: developerChoice });
       const verdict = String(result.verdict);
       showToast(
         verdict === "do not proceed"
@@ -87,15 +138,59 @@ export default function Console() {
       );
     });
 
+  const createProject = () =>
+    act("create", async () => {
+      const milestones = np.milestones
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .map((line) => {
+          const [description = "", stage = "", percent = ""] = line.split("|").map((s) => s.trim());
+          return { description, stage, percent: Number.parseInt(percent, 10) };
+        });
+      const result = await call("/api/projects", {
+        id: np.id.trim(),
+        name: np.name.trim(),
+        developerName: np.developerName.trim(),
+        projectRef: np.projectRef.trim() || undefined,
+        latitude: Number.parseFloat(np.latitude),
+        longitude: Number.parseFloat(np.longitude),
+        developerAddress: np.developerAddress.trim(),
+        senderPhone: np.senderPhone.trim() || undefined,
+        fundingTargetKes: np.fundingTargetKes ? Number.parseInt(np.fundingTargetKes, 10) : undefined,
+        milestones,
+      });
+      showToast(String(result.message));
+      switchProject(String(result.id));
+    });
+
   const over = state ? state.status !== "Active" : true;
+  const locked = !operator || over || busy !== null;
   const current = state?.milestones.find((m) => m.current);
+  const buyHref = state ? `/buy?project=${state.project}` : "/buy";
+
   return (
     <div className="wrap">
       <header className="masthead">
         <h1>Drawdown register</h1>
         <div className="meta">
           <span>
-            Project <b>{state?.site ?? "—"}</b>
+            Project{" "}
+            {projects.length > 1 ? (
+              <select
+                aria-label="Project"
+                value={state?.project ?? ""}
+                onChange={(e) => switchProject(e.target.value)}
+              >
+                {projects.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <b>{state?.site ?? "—"}</b>
+            )}
           </span>
           <span>
             Status <b>{state?.status ?? "—"}</b>
@@ -104,7 +199,19 @@ export default function Console() {
             Ledger <b>{state ? `${state.contract.slice(0, 10)}…` : "—"}</b>
           </span>
           <span>
-            <Link href="/buy">Buyer page →</Link>
+            {operator ? (
+              <>
+                Operator{" "}
+                <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>
+                  sign out
+                </a>
+              </>
+            ) : (
+              <b>Read-only</b>
+            )}
+          </span>
+          <span>
+            <Link href={buyHref}>{state?.is_remittance ? "Sender page →" : "Buyer page →"}</Link>
           </span>
         </div>
       </header>
@@ -134,8 +241,9 @@ export default function Console() {
           <div>
             <span>3 — Two of three sign</span>
             <p>
-              The evidence pipeline is one signature. A licensed surveyor or the platform is the
-              second. No single party, including us, can move money alone.
+              The evidence pipeline is one signature. A licensed surveyor, the person whose money it
+              is, or the platform is the second. No single party, including us, can move money
+              alone.
             </p>
           </div>
           <div>
@@ -209,19 +317,46 @@ export default function Console() {
 
       <div className="cols">
         <div>
+          {!operator && (
+            <section className="panel">
+              <h2>
+                <span>Operator sign-in</span>
+                <span>Controls are locked</span>
+              </h2>
+              <div className="body">
+                <p>
+                  Anyone can read this register. Submitting evidence, countersigning, stalling and
+                  refunding need the operator secret.
+                </p>
+                <label htmlFor="secret">Operator secret</label>
+                <input
+                  id="secret"
+                  type="password"
+                  value={secret}
+                  onChange={(e) => setSecret(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && secret && signIn()}
+                />
+                <button onClick={signIn} disabled={busy !== null || !secret}>
+                  {busy === "login" ? "Checking…" : "Unlock"}
+                </button>
+              </div>
+            </section>
+          )}
+
           <section className="panel">
             <h2>
               <span>1 — Site evidence</span>
-              <span>Developer</span>
+              <span>{state?.is_remittance ? "Builder" : "Developer"}</span>
             </h2>
             <div className="body">
               <p>
-                The developer submits three geotagged photographs of the current stage. Location,
-                recency, novelty and stage are checked before anything moves.
+                The {state?.is_remittance ? "builder" : "developer"} submits three geotagged
+                photographs of the current stage. Location, recency, novelty and stage are checked
+                before anything moves.
               </p>
               <label htmlFor="images">Photographs</label>
-              <input id="images" ref={filesRef} type="file" accept="image/jpeg" multiple />
-              <button onClick={submitEvidence} disabled={over || busy !== null}>
+              <input id="images" ref={filesRef} type="file" accept="image/jpeg" multiple disabled={!operator} />
+              <button onClick={submitEvidence} disabled={locked}>
                 Submit for verification
               </button>
             </div>
@@ -234,14 +369,17 @@ export default function Console() {
             </h2>
             <div className="body">
               <p>
-                The evidence pipeline is one attester. A second signature releases the funds — no
-                single party, including the platform, can move money alone.
+                {state?.is_remittance
+                  ? `The evidence pipeline is one attester. The sender, ${state.sender_phone ?? ""}, approves from their own page; the platform can countersign instead if they ask us to.`
+                  : "The evidence pipeline is one attester. A second signature releases the funds. No single party, including the platform, can move money alone."}
               </p>
               <div className="btns">
-                <button onClick={() => attest(1)} disabled={over || busy !== null}>
-                  Surveyor confirms
-                </button>
-                <button className="ghost" onClick={() => attest(2)} disabled={over || busy !== null}>
+                {!state?.is_remittance && (
+                  <button onClick={() => attest(1)} disabled={locked}>
+                    Surveyor confirms
+                  </button>
+                )}
+                <button className="ghost" onClick={() => attest(2)} disabled={locked}>
                   Platform confirms
                 </button>
               </div>
@@ -250,24 +388,90 @@ export default function Console() {
 
           <section className="panel">
             <h2>
-              <span>If the developer walks away</span>
+              <span>If the {state?.is_remittance ? "builder" : "developer"} walks away</span>
             </h2>
             <div className="body">
               <p>Unreleased funds are returned pro rata. Claim order changes nothing.</p>
               <div className="btns">
-                <button className="danger" onClick={stall} disabled={over || busy !== null}>
+                <button className="danger" onClick={stall} disabled={locked}>
                   Declare project stalled
                 </button>
                 <button
                   className="danger"
                   onClick={refund}
-                  disabled={state?.status !== "Stalled" || busy !== null}
+                  disabled={!operator || state?.status !== "Stalled" || busy !== null}
                 >
                   Refund every buyer
                 </button>
               </div>
             </div>
           </section>
+
+          {operator && (
+            <section className="panel">
+              <h2>
+                <span>Open a new project</span>
+                <span>Deploys its own escrow</span>
+              </h2>
+              <div className="body">
+                <details>
+                  <summary>New development or remittance build</summary>
+                  <p className="hint">
+                    Four transactions on Fuji, about a minute. Milestones are one per line as
+                    description | stage | percent, and the percents must total 100. Stages:{" "}
+                    {STAGES.join(", ")}.
+                  </p>
+                  <div className="row">
+                    <div>
+                      <label htmlFor="np-id">Project id</label>
+                      <input id="np-id" placeholder="ruiru-plot-12" value={np.id} onChange={field("id")} />
+                    </div>
+                    <div>
+                      <label htmlFor="np-name">Site name</label>
+                      <input id="np-name" placeholder="Ruiru plot 12" value={np.name} onChange={field("name")} />
+                    </div>
+                  </div>
+                  <div className="row">
+                    <div>
+                      <label htmlFor="np-dev">Developer or builder</label>
+                      <input id="np-dev" value={np.developerName} onChange={field("developerName")} />
+                    </div>
+                    <div>
+                      <label htmlFor="np-ref">NCA project ref (optional)</label>
+                      <input id="np-ref" value={np.projectRef} onChange={field("projectRef")} />
+                    </div>
+                  </div>
+                  <div className="row">
+                    <div>
+                      <label htmlFor="np-lat">Latitude</label>
+                      <input id="np-lat" value={np.latitude} onChange={field("latitude")} />
+                    </div>
+                    <div>
+                      <label htmlFor="np-lon">Longitude</label>
+                      <input id="np-lon" value={np.longitude} onChange={field("longitude")} />
+                    </div>
+                  </div>
+                  <label htmlFor="np-addr">Developer payout address (0x…)</label>
+                  <input id="np-addr" value={np.developerAddress} onChange={field("developerAddress")} />
+                  <div className="row">
+                    <div>
+                      <label htmlFor="np-sender">Sender number (remittance build only)</label>
+                      <input id="np-sender" placeholder="07XX XXX XXX" value={np.senderPhone} onChange={field("senderPhone")} />
+                    </div>
+                    <div>
+                      <label htmlFor="np-target">Funding target (KES, optional)</label>
+                      <input id="np-target" type="number" value={np.fundingTargetKes} onChange={field("fundingTargetKes")} />
+                    </div>
+                  </div>
+                  <label htmlFor="np-ms">Milestones</label>
+                  <textarea id="np-ms" rows={5} value={np.milestones} onChange={field("milestones")} />
+                  <button onClick={createProject} disabled={busy !== null}>
+                    {busy === "create" ? "Deploying escrow…" : "Create project"}
+                  </button>
+                </details>
+              </div>
+            </section>
+          )}
         </div>
 
         <div>
@@ -321,12 +525,14 @@ export default function Console() {
                 exists.
               </p>
               <label htmlFor="devsel">Developer</label>
-              <select id="devsel" value={developer} onChange={(e) => setDeveloper(e.target.value)}>
-                {DEVELOPERS.map((name) => (
-                  <option key={name} value={name}>
-                    {name}
-                  </option>
-                ))}
+              <select id="devsel" value={developerChoice} onChange={(e) => setDeveloper(e.target.value)}>
+                {[state?.developer_name ?? "", ...OTHER_DEVELOPERS]
+                  .filter((name, i, all) => name && all.indexOf(name) === i)
+                  .map((name) => (
+                    <option key={name} value={name}>
+                      {name}
+                    </option>
+                  ))}
               </select>
               <button onClick={corroborateNow} disabled={busy !== null}>
                 Check site and company
