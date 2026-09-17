@@ -29,11 +29,35 @@ export const projects = pgTable("projects", {
   latitude: doublePrecision("latitude").notNull(),
   longitude: doublePrecision("longitude").notNull(),
   contractAddress: text("contract_address"),
+  kesAddress: text("kes_address"),
+  developerAddress: text("developer_address"),
+  // A remittance build has one sender, whose managed wallet is attester 1
+  // on its escrow. Null means a developer-led project countersigned by a
+  // surveyor the platform appoints.
+  senderPhone: text("sender_phone"),
   // What the developer needs raised before the build is fully funded, in
   // whole shillings. Buyers commit against it and deposit toward it.
   fundingTargetKes: integer("funding_target_kes"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One-time codes, stored hashed. A phone number is proven by typing back a
+ * code sent to it; the row is deleted on success, and attempts are counted
+ * so a code cannot be brute-forced in the minutes it is live.
+ */
+export const otpCodes = pgTable(
+  "otp_codes",
+  {
+    id: serial("id").primaryKey(),
+    phone: text("phone").notNull(),
+    codeHash: text("code_hash").notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("otp_codes_phone").on(table.phone)],
+);
 
 export const milestones = pgTable(
   "milestones",

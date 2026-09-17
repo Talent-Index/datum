@@ -22,6 +22,13 @@
       "when": 1788185054227,
       "tag": "0002_mighty_professor_monster",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789680888520,
+      "tag": "0003_large_reaper",
+      "breakpoints": true
     }
   ]
 }
