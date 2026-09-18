@@ -228,11 +228,13 @@ Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are se
 
 An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorization: Bearer` on the API or through `/api/auth/operator` for a cookie. Submitting evidence, countersigning, stalling, refunding, creating a project and replaying payments all require it.
 
-Reads are open: `/api/state`, `/api/projects`, `/api/listings`, `/api/trustees` and `/api/health`.
+Reads are open: `/api/state`, `/api/projects`, `/api/listings`, `/api/trustees`, `/api/health` and `/api/activities?address=`.
+
+Delivering codes needs a provider: Resend for email (`RESEND_API_KEY`, `EMAIL_FROM`) and Africa's Talking for SMS (`AT_USERNAME`, `AT_API_KEY`). Without one the code goes to the server log. For a demonstration with neither, `OTP_TEST_CODE` sets a fixed six-digit code that is accepted on any channel with no provider; it is a deliberate back door for demos and must be unset before anything real runs on the deployment.
 
 ## Accounts, roles and the registry
 
-Buyers sign in with the M-Pesa number they pay from. Sellers, developers, companies and senders abroad sign in with an email address, then add the number they will pay from. Either way the code is one-time, and the subject that was proven is the identity: an Avalanche address is derived from it with the master seed, the same way buyer wallets always were, and registered with the role in the `DatumRegistry` contract. The address is on chain; the email, number and name are not.
+Buyers sign in with the M-Pesa number they pay from and give their name and email when they commit, which opens an account on that number if they had none, so the commitment is a person with an address from the first shilling. An email given that way is contact detail until a code sent to it is typed back on the account page. Sellers, developers, companies and senders abroad sign in with an email address, then add the number they will pay from. Either way the code is one-time, and the subject that was proven is the identity: an Avalanche address is derived from it with the master seed, the same way buyer wallets always were, and registered with the role in the `DatumRegistry` contract. The address is on chain; the email, number and name are not.
 
 Sellers, developers, companies and senders pay a one-off fee (`LISTING_FEE_KES`, KES 200 by default) by M-Pesa prompt to the number they added. The confirmation comes through the same callback as a deposit, marks the account paid, and proves the number, because only that handset could have approved the prompt. Until it is paid, a seller cannot post and a sender cannot commit.
 
@@ -343,6 +345,7 @@ Holding buyers' money in escrow is regulated activity in Kenya. This is an MVP f
 - `/listings` shows what is live. Every listing there has a verified owner, an assigned trustee and a deployed escrow.
 - `/account` is where a person proves their email or number, opens their account, adds the number they pay from, pays the fee, posts with photographs, and waits for staff to verify them.
 - `/buy?project=<id>` is where a buyer or sender commits, pays in, and where the holder of the second signature approves a milestone.
+- `/trace/<address>` is the public record of everything done from one address: kinds, times, record hashes and transactions, with the payload kept private. Every account page links to its own.
 - `/register?project=<id>` is the drawdown register: evidence, countersigning, public-record checks, the buyer ledger, and the operator's review panels.
 
 ## Demo console

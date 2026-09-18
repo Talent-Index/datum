@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { NavLinks } from "@/lib/ui/nav";
 import { asMsisdn, call, kes, useProject, useSession } from "@/lib/ui/project";
@@ -26,6 +26,15 @@ export default function Buy() {
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [commitment, setCommitment] = useState("2000000");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [prefilled, setPrefilled] = useState(false);
+  useEffect(() => {
+    if (prefilled || !session?.account) return;
+    setName(session.account.display_name);
+    setEmail(session.account.email ?? "");
+    setPrefilled(true);
+  }, [session, prefilled]);
   const [amount, setAmount] = useState("50000");
 
   const signedIn = session?.sender ? (session.sender.phone ?? session.account?.phone ?? null) : null;
@@ -70,6 +79,8 @@ export default function Buy() {
     act("register", async () => {
       const result = await call("/api/register", {
         commitmentKes: Number.parseInt(commitment, 10),
+        name: name.trim() || undefined,
+        email: email.trim() || undefined,
       });
       showToast(result.message as string);
     });
@@ -203,9 +214,20 @@ export default function Buy() {
               </h2>
               <div className="body">
                 <p>
-                  Tell us what you intend to put in altogether. The escrow account is managed for
-                  you and any refund goes back to {signedIn}.
+                  Tell us who you are and what you intend to put in altogether. The escrow account
+                  is managed for you, every action is written against your own address, and any
+                  refund goes back to {signedIn}.
                 </p>
+                <div className="row">
+                  <div>
+                    <label htmlFor="cname">Your name</label>
+                    <input id="cname" value={name} onChange={(e) => setName(e.target.value)} />
+                  </div>
+                  <div>
+                    <label htmlFor="cemail">Email</label>
+                    <input id="cemail" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+                  </div>
+                </div>
                 <label htmlFor="commitment">Committing (KES)</label>
                 <input
                   id="commitment"
@@ -214,7 +236,7 @@ export default function Buy() {
                   value={commitment}
                   onChange={(e) => setCommitment(e.target.value)}
                 />
-                <button onClick={register} disabled={over || busy !== null}>
+                <button onClick={register} disabled={over || busy !== null || name.trim().length < 2 || !email.trim()}>
                   {busy === "register"
                     ? "Registering…"
                     : me?.commitment

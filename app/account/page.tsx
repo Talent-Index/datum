@@ -20,6 +20,7 @@ interface AccountView {
   account: {
     id: number;
     email: string | null;
+    email_verified: boolean;
     phone: string | null;
     phone_verified: boolean;
     role: string;
@@ -79,6 +80,9 @@ export default function AccountPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [open, setOpen] = useState({ role: "buyer", displayName: "", companyName: "", registrationNumber: "" });
   const [newPhone, setNewPhone] = useState("");
+  const [newEmail, setNewEmail] = useState("");
+  const [emailCode, setEmailCode] = useState("");
+  const [emailCodeSent, setEmailCodeSent] = useState(false);
   const imagesRef = useRef<HTMLInputElement>(null);
   const [listing, setListing] = useState({
     id: "", kind: "", title: "", description: "", locationName: "", latitude: "-1.2921", longitude: "36.7827", priceKes: "", milestones: MILESTONE_TEMPLATE,
@@ -119,6 +123,8 @@ export default function AccountPage() {
       await load();
     });
 
+  const sendEmailCode = () => act("email", async () => { const r = await call("/api/account/email", { email: newEmail.trim() }); setEmailCodeSent(true); showToast(String(r.message)); });
+  const verifyEmail = () => act("emailverify", async () => { const r = await call("/api/account/email/verify", { email: newEmail.trim(), code: emailCode.trim() }); showToast(String(r.message)); setEmailCodeSent(false); setEmailCode(""); setNewEmail(""); await load(); });
   const savePhone = () => act("phone", async () => { const r = await call("/api/account/phone", { phone: newPhone.trim() }); showToast(String(r.message)); await load(); });
   const payFee = () => act("fee", async () => { const r = await call("/api/account/fee"); showToast(String(r.message)); await load(); });
 
@@ -274,14 +280,48 @@ export default function AccountPage() {
                   <tbody>
                     <tr><td>Address</td><td className="n"><AddressLink address={account.address} /></td></tr>
                     <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <TxLink hash={account.registry_tx} /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
-                    {account.email && <tr><td>Email</td><td className="n">{account.email}</td></tr>}
+                    {account.email && <tr><td>Email</td><td className="n">{account.email} {account.email_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</td></tr>}
                     <tr><td>M-Pesa number</td><td className="n">{account.phone ? <>{account.phone} {account.phone_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</> : "—"}</td></tr>
                     {(account.fee_required || account.fee_status === "paid") && <tr><td>Platform fee</td><td className="n">{feeState === "paid" ? <span className="sig">paid</span> : feeState === "waiting" ? <span className="held-c">waiting for M-Pesa</span> : kes(account.fee_kes) + " due"}</td></tr>}
                     <tr><td>Verification</td><td className="n">{identityLine}</td></tr>
                   </tbody>
                 </table>
+                <p className="hint" style={{ marginTop: 12 }}>
+                  Everything you do here is written against this address. <Link href={`/trace/${account.address}`}>Trace every activity at it →</Link>
+                </p>
               </div>
             </section>
+
+            {!account.email_verified && (
+              <section className="panel">
+                <h2><span>{account.email ? "Confirm your email" : "Add your email"}</span><span>Code by email</span></h2>
+                <div className="body">
+                  <p>{account.email ? `${account.email} was given as contact detail. Confirm it and staff and receipts reach you there.` : "An email on your profile means staff and receipts reach you there, and you can sign in by email as well as by number."}</p>
+                  <div className="row">
+                    <div>
+                      <label htmlFor="newemail">Email address</label>
+                      <input id="newemail" type="email" placeholder={account.email ?? "you@example.com"} value={newEmail} onChange={(e) => setNewEmail(e.target.value)} disabled={emailCodeSent} />
+                    </div>
+                    {emailCodeSent && (
+                      <div>
+                        <label htmlFor="emailcode">Code</label>
+                        <input id="emailcode" inputMode="numeric" value={emailCode} onChange={(e) => setEmailCode(e.target.value)} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="btns">
+                    {emailCodeSent ? (
+                      <>
+                        <button onClick={verifyEmail} disabled={busy !== null || emailCode.length !== 6}>Confirm</button>
+                        <button className="ghost" onClick={() => setEmailCodeSent(false)} disabled={busy !== null}>Change</button>
+                      </>
+                    ) : (
+                      <button className="ghost" onClick={sendEmailCode} disabled={busy !== null || !newEmail.trim()}>{busy === "email" ? "Sending…" : "Send me a code"}</button>
+                    )}
+                  </div>
+                </div>
+              </section>
+            )}
 
             {needsPhone && (
               <section className="panel decide">
