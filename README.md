@@ -228,7 +228,19 @@ Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are se
 
 An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorization: Bearer` on the API or through `/api/auth/operator` for a cookie. Submitting evidence, countersigning, stalling, refunding, creating a project and replaying payments all require it.
 
-Reads are open: `/api/state`, `/api/projects` and `/api/health`.
+Reads are open: `/api/state`, `/api/projects`, `/api/listings`, `/api/trustees` and `/api/health`.
+
+## Accounts, roles and the registry
+
+Every person on the platform opens an account on their proven number and chooses a role once: buyer, seller, developer or company. Trustees are appointed by the operator, not chosen. Opening an account derives an Avalanche address from the master seed and the number, the same address a buyer's escrow deposits use, and registers it with its role in the `DatumRegistry` contract. The address is on chain; the name and number are not.
+
+Sellers, developers and companies cannot list until their identity has been checked. The submission is the name, the document type and number, and a photo or scan; the document is hashed and discarded, and the review works from the hash, the last four digits and the name. A trustee or the operator records the verdict on chain against that hash with the reviewer's address, so every verification is attributable. This is a capture-and-review workflow. Verification against IPRS needs a licensed provider and is a partnership, not code.
+
+A listing is posted to the registry, which refuses it unless the owner's identity is verified there too. A trustee reviews it; approval deploys the escrow with the listing's milestones, the owner's address as payee and the assigned trustee as attester 1, marks the listing live on chain, and buyers can commit from that moment. The trustee countersigns each milestone from their own account page, exactly as a remittance sender does. A property for sale gets a single milestone, handover and title transfer, released on the trustee's signature.
+
+Every action anyone takes is written to the registry as a hash keyed to the actor's address: account opened, identity submitted and verified, listing posted and approved, commitment registered, deposit requested and confirmed, evidence accepted or rejected, milestone countersigned, approved or declined, project created, stalled or refunded. The readable record stays in Postgres beside the hash and the transaction. A write that fails is kept with its error and retried by the replay job. The platform wallet pays the gas for all of it, which is free on Fuji and a real cost anywhere else.
+
+Concurrency note: the platform wallet signs every registry write. Two requests landing in the same second can race on the nonce; the loser is recorded without a transaction and replayed. A queue in front of the wallet is the production fix.
 
 ## Projects
 
