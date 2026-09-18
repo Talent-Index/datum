@@ -114,6 +114,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     project: project.id,
+    trustee_account_id: project.trusteeAccountId,
     site: project.name,
     status,
     total_deposited: Number(totalDeposited / KES_UNITS),

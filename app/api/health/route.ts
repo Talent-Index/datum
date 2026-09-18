@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 import { publicClient } from "@/lib/chain";
 import { db } from "@/lib/db";
 import { listProjects } from "@/lib/project";
+import { registryAddress } from "@/lib/registry";
 
 /**
  * Is the platform standing? Database, chain RPC, and every project's
@@ -26,6 +27,16 @@ export async function GET(): Promise<NextResponse> {
     checks.rpc = { ok: true, detail: `chain ${id}` };
   } catch (e) {
     checks.rpc = { ok: false, detail: e instanceof Error ? e.message : String(e) };
+  }
+
+  if (chainOk) {
+    try {
+      const address = registryAddress();
+      const code = await publicClient().getCode({ address });
+      checks.registry = { ok: !!code && code !== "0x", detail: address };
+    } catch (e) {
+      checks.registry = { ok: false, detail: e instanceof Error ? e.message : String(e) };
+    }
   }
 
   if (checks.database?.ok && chainOk) {

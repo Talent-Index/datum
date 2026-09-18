@@ -14,6 +14,7 @@ import {
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { resolveProject } from "@/lib/project";
+import { logActivity } from "@/lib/registry";
 
 /**
  * Every buyer takes their pro rata share of what is left. claimRefund is
@@ -81,5 +82,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     paid.push({ phone: buyer.phone, refund: Number((after - before) / KES_UNITS) });
   }
 
+  if (paid.length) {
+    await logActivity({
+      accountId: null,
+      actorAddress: platformWallet().account.address,
+      kind: "project.refunded",
+      payload: { project: project.id, refunds: paid },
+    });
+  }
   return NextResponse.json({ ok: true, refunds: paid });
 }

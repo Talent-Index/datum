@@ -4,6 +4,8 @@ import { z } from "zod";
 import { isOperator } from "@/lib/auth";
 import { STAGES } from "@/lib/evidence/classifier";
 import { createProject, listProjects } from "@/lib/project";
+import { platformWallet } from "@/lib/chain";
+import { logActivity } from "@/lib/registry";
 
 /** Every project, for the index page and for anyone choosing one. */
 export async function GET(): Promise<NextResponse> {
@@ -71,6 +73,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       fundingTargetKes: input.fundingTargetKes ?? null,
       stallAfterSeconds: (input.stallAfterDays ?? 30) * 24 * 3600,
       milestones: input.milestones,
+    });
+    await logActivity({
+      accountId: null,
+      actorAddress: platformWallet().account.address,
+      kind: "project.created",
+      payload: { project: project.id, contract: project.contractAddress, kes: project.kesAddress },
     });
     return NextResponse.json({
       ok: true,

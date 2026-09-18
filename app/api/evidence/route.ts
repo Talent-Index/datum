@@ -19,6 +19,7 @@ import { stageClassifier } from "@/lib/evidence/classifier";
 import { PostgresSeenHashStore } from "@/lib/evidence/store";
 import { EvidenceVerifier, type Verdict } from "@/lib/evidence/verifier";
 import { resolveProject } from "@/lib/project";
+import { logActivity } from "@/lib/registry";
 
 /**
  * Developer uploads site photographs; the pipeline rules on them and, when
@@ -175,6 +176,19 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   // Accepted image hashes are already persisted to evidence_images by the
   // verifier's seen-hash store; a second insert here would double-count.
+
+  await logActivity({
+    accountId: null,
+    actorAddress: oracleWallet().account.address,
+    kind: verdict.accepted ? "evidence.accepted" : "evidence.rejected",
+    payload: {
+      project: project.id,
+      milestone: milestoneId,
+      evidenceHash: verdict.evidenceHash,
+      images: verdict.images.map((i) => i.sha256),
+      attestTx: txHash,
+    },
+  });
 
   return NextResponse.json(toWireVerdict(verdict, thumbnails));
 }

@@ -15,6 +15,7 @@ import {
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { isRemittance, resolveProject } from "@/lib/project";
+import { logActivity } from "@/lib/registry";
 
 const bodySchema = z.object({ role: z.union([z.literal(1), z.literal(2)]) });
 
@@ -93,6 +94,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       evidenceHash,
       accepted: true,
       txHash: hash,
+    });
+    await logActivity({
+      accountId: null,
+      actorAddress: account.address,
+      kind: "milestone.countersigned",
+      payload: { project: project.id, milestone: milestoneId, role, evidenceHash, attestTx: hash },
     });
     return NextResponse.json({ ok: true });
   } catch (error) {

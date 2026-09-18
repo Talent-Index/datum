@@ -10,6 +10,7 @@ import {
   revertReason,
 } from "@/lib/chain";
 import { resolveProject } from "@/lib/project";
+import { logActivity } from "@/lib/registry";
 
 /**
  * The platform declaring a stall is one path; after the timeout any buyer
@@ -35,6 +36,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       gas: WRITE_GAS,
     });
     await publicClient().waitForTransactionReceipt({ hash });
+    await logActivity({
+      accountId: null,
+      actorAddress: account.address,
+      kind: "project.stalled",
+      payload: { project: project.id, tx: hash },
+    });
     return NextResponse.json({ ok: true });
   } catch (error) {
     return NextResponse.json({ error: revertReason(error) }, { status: 400 });

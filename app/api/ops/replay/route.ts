@@ -4,6 +4,7 @@ import { inArray, lt, or, and, eq } from "drizzle-orm";
 import { isOperator } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { creditPayment } from "@/lib/payments";
+import { replayActivities } from "@/lib/registry";
 
 /**
  * Finish payments the callback could not.
@@ -11,8 +12,9 @@ import { creditPayment } from "@/lib/payments";
  * Three ways a paid instalment can be left short of escrow: the chain
  * transaction failed after M-Pesa confirmed, Safaricom's status query was
  * still "processing" when the callback arrived, or the callback never came
- * at all. Each is re-checked against Safaricom and credited if paid. Runs
- * from the Vercel cron and on demand by an operator.
+ * at all. Each is re-checked against Safaricom and credited if paid. Then
+ * every activity whose registry write failed is written again. Runs from
+ * the Vercel cron and on demand by an operator.
  */
 const STALE_MINUTES = 3;
 
@@ -52,7 +54,8 @@ async function replay(): Promise<Record<string, unknown>> {
     const outcome = await creditPayment(c.id);
     results.push({ id: c.checkoutRequestId, before: c.status, after: outcome.status });
   }
-  return { checked: candidates.length, results };
+  const activities = await replayActivities();
+  return { checked: candidates.length, results, activities };
 }
 
 export async function POST(request: Request): Promise<NextResponse> {

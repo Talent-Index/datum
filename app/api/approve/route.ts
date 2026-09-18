@@ -10,16 +10,19 @@ import {
   senderWallet,
 } from "@/lib/chain";
 import { currentSender } from "@/lib/auth";
+import { currentAccount } from "@/lib/accounts";
 import { db, schema } from "@/lib/db";
-import { isRemittance, resolveProject } from "@/lib/project";
+import { resolveProject } from "@/lib/project";
+import { logActivity } from "@/lib/registry";
 
 /**
- * The sender's decision on a milestone.
+ * The second signature on a milestone, from whoever holds it.
  *
- * On a remittance build the person who sent the money is attester 1, so this
- * is the second of the two signatures a release needs — the builder has the
- * first only when the photographs passed. Declining signs nothing: the money
- * stays where it is and the builder has to submit evidence that holds up.
+ * On a remittance build that is the person who sent the money; on a listed
+ * project it is the trustee assigned at approval. Either way attester 1 is
+ * their managed wallet, the builder has the first signature only when the
+ * photographs passed, and declining signs nothing: the money stays where
+ * it is and the builder has to submit evidence that holds up.
  */
 const bodySchema = z.object({
   decision: z.enum(["approve", "decline"]),
@@ -31,25 +34,29 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!project) {
     return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
   }
-  if (!isRemittance(project) || !project.senderPhone) {
+  if (!project.senderPhone && !project.trusteeAccountId) {
     return NextResponse.json(
-      { error: "This project has no sender; a surveyor countersigns it" },
+      { error: "This project has no sender or trustee; a surveyor countersigns it" },
       { status: 400 },
     );
   }
 
-  // The second signature is the sender's alone. Anyone else with a session
-  // — another buyer, a curious visitor — is refused before the body is read.
+  // The second signature belongs to one person. Anyone else with a session,
+  // another buyer or a curious visitor, is refused before the body is read.
   const session = currentSender(request);
   if (!session) {
     return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
   }
-  if (session.phone !== project.senderPhone) {
+  const account = await currentAccount(request);
+  const isSender = project.senderPhone !== null && session.phone === project.senderPhone;
+  const isTrustee = account !== null && account.id === project.trusteeAccountId;
+  if (!isSender && !isTrustee) {
     return NextResponse.json(
-      { error: "Only the sender on this project can approve or decline a milestone" },
+      { error: "Only the sender or the assigned trustee on this project can approve or decline a milestone" },
       { status: 403 },
     );
   }
+  const signerLabel = isSender ? "Sender" : "Trustee";
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Body must be { decision, reason? }" }, { status: 400 });
@@ -98,10 +105,16 @@ export async function POST(request: Request): Promise<NextResponse> {
       evidenceHash: latest.evidenceHash,
       accepted: false,
       summary: reason?.trim()
-        ? `Sender declined: ${reason.trim()}`
-        : "Sender declined this milestone.",
+        ? `${signerLabel} declined: ${reason.trim()}`
+        : `${signerLabel} declined this milestone.`,
       verdict: null,
       txHash: null,
+    });
+    await logActivity({
+      accountId: account?.id ?? null,
+      actorAddress: senderWallet(session.phone).account.address,
+      kind: "milestone.declined",
+      payload: { project: project.id, milestone: milestoneId, reason: reason?.trim() || null },
     });
     return NextResponse.json({
       ok: true,
@@ -112,14 +125,14 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let txHash: string;
   try {
-    const { client, account } = senderWallet(project.senderPhone);
-    txHash = await client.writeContract({
+    const signer = senderWallet(session.phone);
+    txHash = await signer.client.writeContract({
       address: project.contractAddress,
       abi: escrowAbi,
       functionName: "attest",
       args: [BigInt(milestoneId), 1, latest.evidenceHash as `0x${string}`],
-      account,
-      chain: client.chain,
+      account: signer.account,
+      chain: signer.client.chain,
       gas: WRITE_GAS,
     });
     await chain.waitForTransactionReceipt({ hash: txHash as `0x${string}` });
@@ -136,9 +149,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     role: 1,
     evidenceHash: latest.evidenceHash,
     accepted: true,
-    summary: "Sender approved this milestone from the photographs.",
+    summary: `${signerLabel} approved this milestone from the photographs.`,
     verdict: null,
     txHash,
+  });
+  await logActivity({
+    accountId: account?.id ?? null,
+    actorAddress: senderWallet(session.phone).account.address,
+    kind: "milestone.approved",
+    payload: { project: project.id, milestone: milestoneId, evidenceHash: latest.evidenceHash, txHash },
   });
 
   return NextResponse.json({

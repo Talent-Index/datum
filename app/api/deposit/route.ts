@@ -5,6 +5,8 @@ import { currentSender } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { stkPush } from "@/lib/daraja";
 import { resolveProject } from "@/lib/project";
+import { accountByPhone, accountAddress } from "@/lib/accounts";
+import { logActivity } from "@/lib/registry";
 
 const bodySchema = z.object({
   kes: z.number().int().positive(),
@@ -51,6 +53,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     phone,
     amountKes: kes,
     status: "pending",
+  });
+
+  const account = await accountByPhone(phone);
+  await logActivity({
+    accountId: account?.id ?? null,
+    actorAddress: accountAddress(phone),
+    kind: "deposit.requested",
+    payload: { project: project.id, kes, checkoutRequestId: push.CheckoutRequestID },
   });
 
   return NextResponse.json({

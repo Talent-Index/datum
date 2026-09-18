@@ -6,6 +6,8 @@ import { currentSender } from "@/lib/auth";
 import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { resolveProject } from "@/lib/project";
+import { accountByPhone } from "@/lib/accounts";
+import { logActivity } from "@/lib/registry";
 
 /**
  * A buyer signs up with a phone number and what they undertake to pay in
@@ -59,6 +61,14 @@ export async function POST(request: Request): Promise<NextResponse> {
       commitmentKes,
     });
   }
+
+  const account = await accountByPhone(phone);
+  await logActivity({
+    accountId: account?.id ?? null,
+    actorAddress: (existing[0]?.walletAddress ?? address) as `0x${string}`,
+    kind: "commitment.registered",
+    payload: { project: project.id, commitmentKes },
+  });
 
   // Report the wallet the buyer's money is actually in. A returning buyer
   // keeps the address their earlier instalments were paid to.
