@@ -48,7 +48,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
   }
   const account = await currentAccount(request);
-  const isSender = project.senderPhone !== null && session.subject === project.senderPhone;
+  const isSender = project.senderPhone !== null && (account?.subject ?? session.subject) === project.senderPhone;
   const isTrustee = account !== null && account.id === project.trusteeAccountId;
   if (!isSender && !isTrustee) {
     return NextResponse.json(
@@ -112,7 +112,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
     await logActivity({
       accountId: account?.id ?? null,
-      actorAddress: senderWallet(session.subject).account.address,
+      actorAddress: senderWallet(account?.subject ?? session.subject).account.address,
       kind: "milestone.declined",
       payload: { project: project.id, milestone: milestoneId, reason: reason?.trim() || null },
     });
@@ -125,7 +125,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let txHash: string;
   try {
-    const signer = senderWallet(session.subject);
+    const signer = senderWallet(account?.subject ?? session.subject);
     txHash = await signer.client.writeContract({
       address: project.contractAddress,
       abi: escrowAbi,
@@ -155,7 +155,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   await logActivity({
     accountId: account?.id ?? null,
-    actorAddress: senderWallet(session.subject).account.address,
+    actorAddress: senderWallet(account?.subject ?? session.subject).account.address,
     kind: "milestone.approved",
     payload: { project: project.id, milestone: milestoneId, evidenceHash: latest.evidenceHash, txHash },
   });

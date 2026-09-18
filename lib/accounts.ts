@@ -34,7 +34,15 @@ export const feeRequired = (a: Account): boolean =>
 export async function currentAccount(request: Request): Promise<Account | null> {
   const session = currentSender(request);
   if (!session) return null;
-  return accountBySubject(session.subject);
+  const direct = await accountBySubject(session.subject);
+  if (direct) return direct;
+  // A phone account that confirmed an email can sign in with it. Only a
+  // proven email counts: one given as contact detail was never checked.
+  if (session.email) {
+    const byEmail = await accountByEmail(session.email);
+    if (byEmail?.emailVerified) return byEmail;
+  }
+  return null;
 }
 
 export async function accountBySubject(subject: string): Promise<Account | null> {
