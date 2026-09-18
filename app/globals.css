@@ -257,7 +257,7 @@ a.tx{font-family:var(--mono);font-size:12px;font-weight:500}
   border-top:4px solid var(--green);
 }
 .role-card:hover{transform:translateY(-2px);text-decoration:none;border-color:var(--green);box-shadow:0 12px 28px -12px rgba(20,33,27,.3)}
-.role-card .pill{align-self:flex-start;background:var(--green-soft);color:var(--green)}
+.role-card .pill{align-self:flex-start;background:var(--green-soft);color:var(--green);text-transform:none}
 .role-card b{font-size:15px;line-height:1.35;letter-spacing:-.005em}
 .role-card p{margin:0;font-size:13px;line-height:1.5;color:var(--muted);flex:1}
 .role-action{font-weight:700;color:var(--green);font-size:13.5px}
