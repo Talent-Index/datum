@@ -265,3 +265,6 @@ a.tx{font-family:var(--mono);font-size:12px;font-weight:500}
 .role-seller .pill,.role-developer .pill,.role-company .pill{background:var(--clay-soft);color:var(--clay)}
 .role-trustee,.role-operator{border-top-color:var(--ink)}
 .role-trustee .pill,.role-operator .pill{background:var(--sunk);color:var(--ink)}
+.thumbs{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0 10px}
+.thumbs img{width:96px;height:72px;object-fit:cover;border-radius:7px;border:1px solid var(--rule-soft)}
+.card .cover{width:100%;height:190px;object-fit:cover;display:block;border-bottom:1px solid var(--rule-soft)}

@@ -8,35 +8,32 @@ import { call, kes, useProject } from "@/lib/ui/project";
 import { ActivityFeed, ReviewPanels } from "@/lib/ui/review";
 
 /**
- * One page for whoever you are here: prove the number, open the account,
- * pass the identity check, then do the work of your role. Buyers see what
- * they committed to; sellers, developers and companies list; trustees
- * review and countersign.
+ * One page for whoever you are here. Prove an email or a number, open the
+ * account, then do the work of your role: add the number you pay from, pay
+ * the platform fee, post what you are selling or building with photographs,
+ * and wait for Datum staff to reach out and verify you. Buyers commit;
+ * trustees review and countersign.
  */
 
 interface AccountView {
-  session: { phone: string } | null;
+  session: { subject: string; phone: string | null; email: string | null } | null;
   account: {
     id: number;
-    phone: string;
+    email: string | null;
+    phone: string | null;
+    phone_verified: boolean;
     role: string;
     display_name: string;
     company_name: string | null;
     address: string;
     kyc_status: string;
+    fee_status: string;
+    fee_required: boolean;
+    fee_kes: number;
     registry_tx: string | null;
     registered_on_chain: boolean;
   } | null;
-  kyc: {
-    id: number;
-    status: string;
-    full_name: string;
-    id_type: string;
-    id_last4: string;
-    document: string;
-    note: string | null;
-    tx: string | null;
-  } | null;
+  fee_payment: { status: string; created_at: string; reason: string | null } | null;
   listings: Array<{ id: string; kind: string; title: string; status: string; price_kes: number; project_id: string | null; note: string | null; tx: string | null }>;
   commitments: Array<{ project_id: string; commitment: number | null; wallet: string; name: string }>;
   trustee_of: Array<{ id: string; name: string }>;
@@ -44,18 +41,19 @@ interface AccountView {
 
 const ROLE_COPY: Record<string, string> = {
   buyer: "You commit to a listed home or plot and pay in instalments that sit in escrow until the work is proven.",
-  seller: "You advertise a property that exists. Once your identity is verified and a trustee approves the listing, buyers pay into escrow and the money reaches you on handover.",
-  developer: "You build. Each milestone you photograph and a trustee countersigns releases that stage's share to your address.",
-  company: "Your company raises for a development. Buyers commit against the target and every release is signed by a trustee.",
-  trustee: "You hold the second signature. You verify identities, approve listings, and countersign milestones from the photographs.",
+  sender: "You are abroad and paying for a build back home. Sign in by email, add the M-Pesa number you pay from, and every shilling sits in escrow until a trustee has signed for the work in the photographs.",
+  seller: "You advertise a property that exists. Post it with photographs; Datum staff reach out to verify you, and once approved buyers pay into escrow and the money reaches you on handover.",
+  developer: "You build. Post the build with its milestones and photographs; after verification, each stage you photograph and a trustee countersigns releases that stage's share to your address.",
+  company: "Your company raises for a development. Post it with the funding target; after verification, buyers commit against the target and every release is signed by a trustee.",
+  trustee: "You hold the second signature. You verify people, approve listings, and countersign milestones from the photographs.",
 };
 
+const EMAIL_ROLES = ["sender", "seller", "developer", "company"];
 const KIND_BY_ROLE: Record<string, string[]> = {
   seller: ["property_sale"],
   developer: ["build", "development"],
   company: ["development", "property_sale"],
 };
-
 const MILESTONE_TEMPLATE = [
   "Foundation complete | foundation | 20",
   "Ground floor slab | ground_slab | 20",
@@ -64,27 +62,35 @@ const MILESTONE_TEMPLATE = [
   "Finishes complete | finishing | 15",
 ].join("\n");
 
+const STATUS_LABEL: Record<string, string> = {
+  pending_review: "awaiting verification",
+  live: "live",
+  rejected: "not approved",
+  withdrawn: "withdrawn",
+};
+
 export default function AccountPage() {
   const { toast, busy, showToast, act } = useProject();
   const [view, setView] = useState<AccountView | null>(null);
-  const [phone, setPhone] = useState("");
+  const [wanted, setWanted] = useState<string | null>(null);
+  const [method, setMethod] = useState<"email" | "phone">("phone");
+  const [identity, setIdentity] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [open, setOpen] = useState({ role: "buyer", displayName: "", companyName: "", registrationNumber: "" });
-  // The homepage sends people here with the role they chose; a trustee has
-  // no self-service sign-up, so that choice only changes the explanation.
-  const [wanted, setWanted] = useState<string | null>(null);
+  const [newPhone, setNewPhone] = useState("");
+  const imagesRef = useRef<HTMLInputElement>(null);
+  const [listing, setListing] = useState({
+    id: "", kind: "", title: "", description: "", locationName: "", latitude: "-1.2921", longitude: "36.7827", priceKes: "", milestones: MILESTONE_TEMPLATE,
+  });
+
   useEffect(() => {
     const role = new URLSearchParams(window.location.search).get("role");
     if (!role) return;
     setWanted(role);
-    if (["buyer", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
+    if (EMAIL_ROLES.includes(role)) setMethod("email");
+    if (["buyer", "sender", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
   }, []);
-  const [kycForm, setKycForm] = useState({ fullName: "", idType: "national_id", idNumber: "" });
-  const docRef = useRef<HTMLInputElement>(null);
-  const [listing, setListing] = useState({
-    id: "", kind: "", title: "", description: "", locationName: "", latitude: "-1.2921", longitude: "36.7827", priceKes: "", milestones: MILESTONE_TEMPLATE,
-  });
 
   const load = useCallback(async () => {
     const r = await fetch("/api/account", { cache: "no-store" });
@@ -92,17 +98,18 @@ export default function AccountPage() {
   }, []);
   useEffect(() => {
     void load();
-    const id = setInterval(() => void load(), 10000);
+    const id = setInterval(() => void load(), 6000);
     return () => clearInterval(id);
   }, [load]);
 
   const account = view?.account ?? null;
-  const signedIn = view?.session?.phone ?? null;
+  const session = view?.session ?? null;
   const kinds = account ? (KIND_BY_ROLE[account.role] ?? []) : [];
   const listingKind = listing.kind || kinds[0] || "";
+  const identityBody = () => (method === "email" ? { email: identity.trim() } : { phone: identity.trim() });
 
-  const sendCode = () => act("otp", async () => { const r = await call("/api/auth/otp", { phone: phone.trim() }); setCodeSent(true); showToast(String(r.message ?? "Code sent.")); });
-  const verifyCode = () => act("verify", async () => { await call("/api/auth/verify", { phone: phone.trim(), code: code.trim() }); setCode(""); setCodeSent(false); await load(); });
+  const sendCode = () => act("otp", async () => { const r = await call("/api/auth/otp", identityBody()); setCodeSent(true); showToast(String(r.message ?? "Code sent.")); });
+  const verifyCode = () => act("verify", async () => { await call("/api/auth/verify", { ...identityBody(), code: code.trim() }); setCode(""); setCodeSent(false); await load(); });
   const signOut = () => act("logout", async () => { await call("/api/auth/logout"); await load(); });
 
   const openAccount = () =>
@@ -112,54 +119,53 @@ export default function AccountPage() {
       await load();
     });
 
-  const submitKyc = () =>
-    act("kyc", async () => {
-      const file = docRef.current?.files?.[0];
-      if (!file) { showToast("Attach the document first.", true); return; }
-      const form = new FormData();
-      form.append("fullName", kycForm.fullName);
-      form.append("idType", kycForm.idType);
-      form.append("idNumber", kycForm.idNumber);
-      form.append("document", file);
-      const r = await call("/api/kyc", form);
-      showToast(String(r.message));
-      if (docRef.current) docRef.current.value = "";
-      await load();
-    });
+  const savePhone = () => act("phone", async () => { const r = await call("/api/account/phone", { phone: newPhone.trim() }); showToast(String(r.message)); await load(); });
+  const payFee = () => act("fee", async () => { const r = await call("/api/account/fee"); showToast(String(r.message)); await load(); });
 
   const postListing = () =>
     act("list", async () => {
-      const milestones = listingKind === "property_sale" ? undefined : listing.milestones.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
-        const [description = "", stage = "", percent = ""] = line.split("|").map((s) => s.trim());
-        return { description, stage, percent: Number.parseInt(percent, 10) };
-      });
-      const r = await call("/api/listings", {
-        id: listing.id.trim(), kind: listingKind, title: listing.title.trim(), description: listing.description.trim(),
-        locationName: listing.locationName.trim(), latitude: Number.parseFloat(listing.latitude), longitude: Number.parseFloat(listing.longitude),
-        priceKes: Number.parseInt(listing.priceKes, 10), milestones,
-      });
+      const files = imagesRef.current?.files;
+      if (!files?.length) { showToast("Attach at least one photograph.", true); return; }
+      const form = new FormData();
+      form.append("id", listing.id.trim());
+      form.append("kind", listingKind);
+      form.append("title", listing.title.trim());
+      form.append("description", listing.description.trim());
+      form.append("locationName", listing.locationName.trim());
+      form.append("latitude", listing.latitude);
+      form.append("longitude", listing.longitude);
+      form.append("priceKes", listing.priceKes);
+      if (listingKind !== "property_sale") {
+        const milestones = listing.milestones.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+          const [description = "", stage = "", percent = ""] = line.split("|").map((s) => s.trim());
+          return { description, stage, percent: Number.parseInt(percent, 10) };
+        });
+        form.append("milestones", JSON.stringify(milestones));
+      }
+      for (const f of files) form.append("images", f);
+      const r = await call("/api/listings", form);
       showToast(String(r.message));
       setListing((v) => ({ ...v, id: "", title: "", description: "", priceKes: "" }));
+      if (imagesRef.current) imagesRef.current.value = "";
       await load();
     });
 
-  const kycBadge = !account ? "" : account.role === "trustee" ? "appointed by the platform" : ({ none: "not started", pending: "under review", verified: "verified", rejected: "not verified" } as Record<string, string>)[account.kyc_status];
+  const feeState = account ? (account.fee_status === "paid" ? "paid" : view?.fee_payment?.status === "pending" || account.fee_status === "pending" ? "waiting" : "due") : "";
+  const needsPhone = !!account && !account.phone;
+  const canPost = !!account && !account.fee_required && !needsPhone;
+  const identityLine = account ? (account.role === "trustee" ? "appointed by the platform" : account.kyc_status === "verified" ? "verified by Datum staff" : view?.listings.some((l) => l.status === "pending_review") ? "staff will reach out to you" : "after you post") : "";
 
   return (
     <div className="wrap">
       <header className="masthead">
-        <h1>{account ? `${account.display_name}` : "Your account"}</h1>
+        <h1>{account ? account.display_name : "Your account"}</h1>
         <div className="meta">
           <NavLinks current="account" />
-          {account && (
-            <span>Role <b>{account.role}</b></span>
-          )}
-          {account && (
-            <span>Identity <b>{kycBadge}</b></span>
-          )}
-          {signedIn && (
+          {account && <span>Role <b>{account.role}</b></span>}
+          {account && <span>Verification <b>{identityLine}</b></span>}
+          {session && (
             <span>
-              <b>{signedIn}</b>{" "}
+              <b>{session.subject}</b>{" "}
               <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>sign out</a>
             </span>
           )}
@@ -168,24 +174,31 @@ export default function AccountPage() {
 
       {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.text}</div>}
 
-      {!signedIn && (
+      {!session && (
         <div className="cols">
           <section className="panel">
-            <h2><span>{wanted ? `Continue as ${wanted === "trustee" ? "a trustee" : wanted === "operator" ? "the operator" : `a ${wanted}`}` : "Prove your number"}</span><span>One-time code by SMS</span></h2>
+            <h2>
+              <span>{wanted ? `Continue as ${wanted === "trustee" ? "a trustee" : wanted === "operator" ? "the operator" : `a ${wanted}`}` : "Sign in"}</span>
+              <span>One-time code</span>
+            </h2>
             <div className="body">
               {wanted === "trustee" ? (
                 <p>Trustees are appointed by the platform. Sign in with the number you were appointed on and your desk opens; if you have not been appointed, ask the operator.</p>
               ) : (
-                <p>Every account is tied to an M-Pesa number. We send a six-digit code to it; nothing else is asked of you.</p>
+                <p>Buyers sign in with the M-Pesa number they pay from. Sellers, developers, companies and anyone sending money from abroad sign in by email and add a number afterwards.</p>
               )}
+              <div className="btns" style={{ marginBottom: 12 }}>
+                <button className={method === "email" ? "" : "ghost"} onClick={() => { setMethod("email"); setCodeSent(false); }} disabled={busy !== null}>Email</button>
+                <button className={method === "phone" ? "" : "ghost"} onClick={() => { setMethod("phone"); setCodeSent(false); }} disabled={busy !== null}>M-Pesa number</button>
+              </div>
               <div className="row">
                 <div>
-                  <label htmlFor="phone">M-Pesa number</label>
-                  <input id="phone" placeholder="07XX XXX XXX" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
+                  <label htmlFor="identity">{method === "email" ? "Email address" : "M-Pesa number"}</label>
+                  <input id="identity" type={method === "email" ? "email" : "tel"} placeholder={method === "email" ? "you@example.com" : "07XX XXX XXX"} value={identity} onChange={(e) => setIdentity(e.target.value)} disabled={codeSent} />
                 </div>
                 {codeSent && (
                   <div>
-                    <label htmlFor="code">Code from SMS</label>
+                    <label htmlFor="code">Code</label>
                     <input id="code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
                   </div>
                 )}
@@ -194,10 +207,10 @@ export default function AccountPage() {
                 {codeSent ? (
                   <>
                     <button onClick={verifyCode} disabled={busy !== null || code.length !== 6}>Verify</button>
-                    <button className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>Change number</button>
+                    <button className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>Change</button>
                   </>
                 ) : (
-                  <button onClick={sendCode} disabled={busy !== null || !phone.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
+                  <button onClick={sendCode} disabled={busy !== null || !identity.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
                 )}
               </div>
             </div>
@@ -213,18 +226,19 @@ export default function AccountPage() {
         </div>
       )}
 
-      {signedIn && !account && (
+      {session && !account && (
         <div className="cols">
           <section className="panel">
-            <h2><span>Open your account</span><span>{signedIn}</span></h2>
+            <h2><span>Open your account</span><span>{session.subject}</span></h2>
             <div className="body">
               <p>Choose what you are here to do. The role is chosen once, and an Avalanche address is created for you the moment the account opens.</p>
-              <label htmlFor="role">I am a</label>
+              <label htmlFor="role">I am</label>
               <select id="role" value={open.role} onChange={(e) => setOpen((v) => ({ ...v, role: e.target.value }))}>
-                <option value="buyer">Buyer</option>
-                <option value="seller">Seller of an existing property</option>
-                <option value="developer">Developer or builder</option>
-                <option value="company">Company</option>
+                <option value="buyer">A buyer</option>
+                <option value="sender">Sending money home for a build</option>
+                <option value="seller">A seller of an existing property</option>
+                <option value="developer">A developer or builder</option>
+                <option value="company">A company</option>
               </select>
               <label htmlFor="name">{open.role === "company" ? "Contact person" : "Your name"}</label>
               <input id="name" value={open.displayName} onChange={(e) => setOpen((v) => ({ ...v, displayName: e.target.value }))} />
@@ -260,57 +274,50 @@ export default function AccountPage() {
                   <tbody>
                     <tr><td>Address</td><td className="n"><AddressLink address={account.address} /></td></tr>
                     <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <TxLink hash={account.registry_tx} /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
-                    <tr><td>Identity</td><td className="n">{kycBadge}</td></tr>
+                    {account.email && <tr><td>Email</td><td className="n">{account.email}</td></tr>}
+                    <tr><td>M-Pesa number</td><td className="n">{account.phone ? <>{account.phone} {account.phone_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</> : "—"}</td></tr>
+                    {(account.fee_required || account.fee_status === "paid") && <tr><td>Platform fee</td><td className="n">{feeState === "paid" ? <span className="sig">paid</span> : feeState === "waiting" ? <span className="held-c">waiting for M-Pesa</span> : kes(account.fee_kes) + " due"}</td></tr>}
+                    <tr><td>Verification</td><td className="n">{identityLine}</td></tr>
                   </tbody>
                 </table>
               </div>
             </section>
 
-            {account.role !== "trustee" && account.kyc_status !== "verified" && (
-              <section className="panel">
-                <h2><span>Identity check</span><span>{kycBadge}</span></h2>
+            {needsPhone && (
+              <section className="panel decide">
+                <h2><span>1 — The number you pay from</span><span>M-Pesa</span></h2>
                 <div className="body">
-                  {account.kyc_status === "pending" && view?.kyc ? (
-                    <p>Submitted as <b>{view.kyc.full_name}</b>, {view.kyc.id_type.replace(/_/g, " ")} ending {view.kyc.id_last4}. A trustee is reviewing it.</p>
-                  ) : (
-                    <>
-                      <p>
-                        {account.role === "buyer"
-                          ? "Optional for buyers, but a verified buyer's commitments carry more weight with sellers."
-                          : "Required before you can list. A trustee reviews it and the verdict is written on chain against the document's hash. The document itself is not kept."}
-                      </p>
-                      {view?.kyc?.status === "rejected" && <div className="toast err">Not verified{view.kyc.note ? `: ${view.kyc.note}` : ""}. You can submit again.</div>}
-                      <label htmlFor="kfull">{account.role === "company" ? "Name as registered" : "Full name as on the document"}</label>
-                      <input id="kfull" value={kycForm.fullName} onChange={(e) => setKycForm((v) => ({ ...v, fullName: e.target.value }))} />
-                      <div className="row">
-                        <div>
-                          <label htmlFor="ktype">Document</label>
-                          <select id="ktype" value={account.role === "company" ? "company_registration" : kycForm.idType} onChange={(e) => setKycForm((v) => ({ ...v, idType: e.target.value }))} disabled={account.role === "company"}>
-                            <option value="national_id">National ID</option>
-                            <option value="passport">Passport</option>
-                            <option value="company_registration">Certificate of registration</option>
-                          </select>
-                        </div>
-                        <div>
-                          <label htmlFor="knum">Number</label>
-                          <input id="knum" value={kycForm.idNumber} onChange={(e) => setKycForm((v) => ({ ...v, idNumber: e.target.value }))} />
-                        </div>
-                      </div>
-                      <label htmlFor="kdoc">Photo or scan</label>
-                      <input id="kdoc" ref={docRef} type="file" accept="image/*,.pdf" />
-                      <button onClick={submitKyc} disabled={busy !== null || !kycForm.fullName || !kycForm.idNumber}>
-                        {busy === "kyc" ? "Submitting…" : "Submit for verification"}
-                      </button>
-                    </>
-                  )}
+                  <p>The fee and every instalment are M-Pesa prompts to this number. It is proven the moment the fee arrives from it.</p>
+                  <label htmlFor="newphone">M-Pesa number</label>
+                  <input id="newphone" type="tel" placeholder="07XX XXX XXX" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
+                  <button onClick={savePhone} disabled={busy !== null || !newPhone.trim()}>Save number</button>
+                </div>
+              </section>
+            )}
+
+            {account.fee_required && !needsPhone && (
+              <section className="panel decide">
+                <h2><span>{account.email ? "2 — " : ""}Platform fee</span><span>{kes(account.fee_kes)}</span></h2>
+                <div className="body">
+                  <p>
+                    {account.role === "sender"
+                      ? "A one-off fee before you can commit to a build. It pays for the trustee who signs for the work."
+                      : "A one-off fee before you can post. It pays for the staff visit that verifies you and your listing."}
+                  </p>
+                  {feeState === "waiting" ? (
+                    <p className="hint">Prompt sent to {account.phone}. Approve it on the handset; this page updates on its own once Safaricom confirms.</p>
+                  ) : null}
+                  {view?.fee_payment?.status === "failed" && <div className="toast err">The last prompt was not paid{view.fee_payment.reason ? `: ${view.fee_payment.reason}` : ""}. Try again.</div>}
+                  <button onClick={payFee} disabled={busy !== null}>{busy === "fee" ? "Sending prompt…" : feeState === "waiting" ? "Send the prompt again" : `Pay ${kes(account.fee_kes)} by M-Pesa`}</button>
                 </div>
               </section>
             )}
 
             {kinds.length > 0 && (
               <section className="panel">
-                <h2><span>Post a listing</span><span>{account.kyc_status === "verified" ? "Reviewed by a trustee" : "Verify your identity first"}</span></h2>
+                <h2><span>{account.email ? "3 — " : ""}Post what you are {account.role === "seller" ? "selling" : "building"}</span><span>{canPost ? "Staff verify after you post" : "Pay the fee first"}</span></h2>
                 <div className="body">
+                  <p>Post it with photographs. Datum staff reach out to you at {account.email ?? account.phone} to verify you and what you posted, and it goes live once they approve.</p>
                   <div className="row">
                     <div>
                       <label htmlFor="lid">Listing id</label>
@@ -353,9 +360,21 @@ export default function AccountPage() {
                       <textarea id="lms" rows={5} value={listing.milestones} onChange={(e) => setListing((v) => ({ ...v, milestones: e.target.value }))} />
                     </>
                   )}
-                  <button onClick={postListing} disabled={busy !== null || account.kyc_status !== "verified" || !listing.id || !listing.title || !listing.priceKes}>
-                    {busy === "list" ? "Recording on chain…" : "Post listing"}
+                  <label htmlFor="limgs">Photographs (up to six)</label>
+                  <input id="limgs" ref={imagesRef} type="file" accept="image/*" multiple />
+                  <button onClick={postListing} disabled={busy !== null || !canPost || !listing.id || !listing.title || !listing.priceKes}>
+                    {busy === "list" ? "Uploading…" : "Post for verification"}
                   </button>
+                </div>
+              </section>
+            )}
+
+            {account.role === "sender" && canPost && (
+              <section className="panel">
+                <h2><span>3 — Choose the build</span></h2>
+                <div className="body">
+                  <p>Fee paid and number proven. Pick the build from the listings, commit, and pay in instalments; the pay-in page shows every photograph before a trustee signs.</p>
+                  <Link className="btn" href="/listings">Browse listings</Link>
                 </div>
               </section>
             )}
@@ -390,18 +409,21 @@ export default function AccountPage() {
                       {view!.listings.map((l) => (
                         <tr key={l.id}>
                           <td>{l.title}{l.project_id && <> <Link href={`/register?project=${l.project_id}`}>register →</Link></>}</td>
-                          <td><span className="pill">{l.status.replace("_", " ")}</span>{l.note ? <div className="hint">{l.note}</div> : null}</td>
+                          <td><span className="pill">{STATUS_LABEL[l.status] ?? l.status}</span>{l.note ? <div className="hint">{l.note}</div> : null}</td>
                           <td className="n">{kes(l.price_kes)}</td>
                           <td className="n"><TxLink hash={l.tx} /></td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
+                  {view!.listings.some((l) => l.status === "pending_review") && (
+                    <p className="hint">Datum staff will contact you at {account.email ?? account.phone} to verify before anything goes live.</p>
+                  )}
                 </div>
               </section>
             )}
 
-            {account.role === "buyer" && (
+            {(account.role === "buyer" || account.role === "sender") && (
               <section className="panel">
                 <h2><span>Your commitments</span></h2>
                 <div className="body">

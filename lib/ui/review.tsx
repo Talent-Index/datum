@@ -37,6 +37,11 @@ interface PendingListing {
   owner_company: string | null;
   owner_role: string;
   owner_address: string;
+  owner_fee: string;
+  owner_kyc: string;
+  owner_email: string | null;
+  owner_phone: string | null;
+  images: number;
   milestones: Array<{ description: string; stage: string; percent: number }>;
   tx: string | null;
 }
@@ -158,7 +163,7 @@ export function ReviewPanels({
           <span>{pending.length} pending</span>
         </h2>
         <div className="body">
-          <p>Approving deploys the escrow with the assigned trustee as the second signer and puts the listing live.</p>
+          <p>Reach out to the owner, verify them and what they posted, then approve. Approval records the verdict, posts the listing to the registry, deploys the escrow with the assigned trustee as the second signer, and puts it live.</p>
           {pending.length === 0 && <p className="empty">Nothing waiting for review.</p>}
           {pending.map((l) => (
             <div className="review" key={l.id}>
@@ -167,8 +172,19 @@ export function ReviewPanels({
                 <span className="pill">{l.kind.replace("_", " ")}</span>
               </div>
               <div className="review-meta">
-                {l.owner_company ?? l.owner} ({l.owner_role}) · {l.location} · {kes(l.price_kes)} · <TxLink hash={l.tx} label="posted on chain" />
+                {l.owner_company ?? l.owner} ({l.owner_role}) · {l.location} · {kes(l.price_kes)} · fee {l.owner_fee} · {l.owner_kyc === "verified" ? "verified" : "not yet verified"}
               </div>
+              <div className="review-meta">
+                Reach out: {l.owner_email ?? "no email"} · {l.owner_phone ?? "no number"} · <AddressLink address={l.owner_address} />
+              </div>
+              {l.images > 0 && (
+                <div className="thumbs">
+                  {Array.from({ length: l.images }, (_, i) => (
+                    /* eslint-disable-next-line @next/next/no-img-element */
+                    <a key={i} href={`/api/listings/${l.id}/image/${i}`} target="_blank" rel="noreferrer"><img src={`/api/listings/${l.id}/image/${i}`} alt={`${l.title} ${i + 1}`} /></a>
+                  ))}
+                </div>
+              )}
               <ul className="ms">
                 {l.milestones.map((m, i) => (
                   <li key={i}>{m.description} <span>{m.percent}%</span></li>
@@ -186,7 +202,7 @@ export function ReviewPanels({
               </select>
               <div className="btns">
                 <button onClick={() => reviewListing(l.id, "approve")} disabled={busy !== null || trustees.length === 0}>
-                  {busy === `listing${l.id}` ? "Deploying escrow…" : "Approve and go live"}
+                  {busy === `listing${l.id}` ? "Recording and deploying…" : "Verified in person: approve and go live"}
                 </button>
                 <button className="danger" onClick={() => reviewListing(l.id, "reject")} disabled={busy !== null}>Reject</button>
               </div>

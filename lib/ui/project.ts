@@ -87,7 +87,7 @@ export interface ProjectSummary {
 
 export interface Session {
   sender: { phone: string; expiresAt: number } | null;
-  account: { id: number; role: string; display_name: string; address: string; kyc_status: string } | null;
+  account: { id: number; role: string; display_name: string; address: string; kyc_status: string; phone: string | null; email: string | null; fee_required: boolean } | null;
   operator: boolean;
 }
 

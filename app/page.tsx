@@ -29,10 +29,18 @@ const ROLES: Array<{
     action: "Browse listings",
   },
   {
+    role: "sender",
+    title: "Sending money home",
+    who: "Abroad, paying for a build on your own plot",
+    does: "Sign in by email, add the M-Pesa number you pay from, pay a small fee, and every shilling sits in escrow until a trustee signs for the work in the photographs.",
+    href: "/account?role=sender",
+    action: "Start sending safely",
+  },
+  {
     role: "seller",
     title: "Seller",
     who: "Selling a plot or a house that already exists",
-    does: "Verify your identity once, list the property, and get paid on handover through escrow instead of chasing a buyer's transfer.",
+    does: "Sign in by email, pay a small listing fee, post the property with photographs. Datum staff reach out to verify you, then buyers pay into escrow and you are paid on handover.",
     href: "/account?role=seller",
     action: "List a property",
   },
@@ -40,7 +48,7 @@ const ROLES: Array<{
     role: "developer",
     title: "Developer or builder",
     who: "Putting up a house or a block, stage by stage",
-    does: "List the build with its milestones. Each stage you photograph and a trustee countersigns releases that stage's share to you.",
+    does: "Sign in by email, pay a small fee, post the build with its milestones and photographs. After staff verify you, each stage a trustee countersigns releases that stage's share.",
     href: "/account?role=developer",
     action: "List a build",
   },
@@ -48,7 +56,7 @@ const ROLES: Array<{
     role: "company",
     title: "Company",
     who: "A registered developer raising for a development",
-    does: "Verify with your certificate of registration, list the development and its funding target, and draw down against verified progress.",
+    does: "Sign in by email, pay the fee, post the development and its funding target with photographs. Staff verify the company, then buyers commit and you draw down against proven progress.",
     href: "/account?role=company",
     action: "List a development",
   },
@@ -166,7 +174,7 @@ export default function Home() {
         <div className="how">
           <div>
             <span>1 — Verified people only</span>
-            <p>Every account is an M-Pesa number proven by code. Sellers, developers and companies pass an identity check before they can list, and the verdict is recorded on chain.</p>
+            <p>Buyers prove an M-Pesa number; everyone else proves an email and adds a number. Sellers, developers and companies pay a small fee, post with photographs, and Datum staff reach out to verify them before anything goes live. The verdict is recorded on chain.</p>
           </div>
           <div>
             <span>2 — Money into escrow</span>

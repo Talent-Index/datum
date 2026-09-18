@@ -28,10 +28,17 @@ export default function Buy() {
   const [commitment, setCommitment] = useState("2000000");
   const [amount, setAmount] = useState("50000");
 
-  const signedIn = session?.sender?.phone ?? null;
-  const me = signedIn
-    ? (state?.buyers.find((b) => asMsisdn(b.phone) === asMsisdn(signedIn)) ?? null)
+  const signedIn = session?.sender ? (session.sender.phone ?? session.account?.phone ?? null) : null;
+  const signedInAs = session?.sender ? (session.account?.email ?? signedIn) : null;
+  const me = session?.sender
+    ? (state?.buyers.find(
+        (b) =>
+          (session.account && b.address === session.account.address) ||
+          (signedIn !== null && asMsisdn(b.phone) === asMsisdn(signedIn)),
+      ) ?? null)
     : null;
+  const needsNumber = !!session?.sender && signedIn === null;
+  const feeDue = !!session?.account?.fee_required;
   const over = state ? state.status !== "Active" : true;
   const isSender =
     (!!signedIn && !!state?.sender_phone && asMsisdn(signedIn) === asMsisdn(state.sender_phone)) ||
@@ -97,9 +104,9 @@ export default function Buy() {
           <span>
             Status <b>{state?.status ?? "—"}</b>
           </span>
-          {signedIn && (
+          {signedInAs && (
             <span>
-              Signed in as <b>{signedIn}</b>{" "}
+              Signed in as <b>{signedInAs}</b>{" "}
               <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>
                 sign out
               </a>
@@ -122,7 +129,17 @@ export default function Buy() {
 
       <div className="cols">
         <div>
-          {!signedIn && (
+          {session?.sender && (needsNumber || feeDue) && (
+            <section className="panel decide">
+              <h2><span>{needsNumber ? "Add the number you pay from" : "Platform fee due"}</span></h2>
+              <div className="body">
+                <p>{needsNumber ? "Instalments are M-Pesa prompts, so your account needs the number they go to." : "Pay the one-off platform fee on your account page before committing."}</p>
+                <Link className="btn" href="/account">Go to your account</Link>
+              </div>
+            </section>
+          )}
+
+          {!session?.sender && (
             <section className="panel">
               <h2>
                 <span>Prove your number</span>
@@ -178,7 +195,7 @@ export default function Buy() {
             </section>
           )}
 
-          {signedIn && (
+          {signedIn && !feeDue && (
             <section className="panel">
               <h2>
                 <span>Your commitment</span>
@@ -346,7 +363,7 @@ export default function Buy() {
                 </table>
               ) : (
                 <p className="empty">
-                  {signedIn ? "Register above to see your position." : "Verify your number to see your position."}
+                  {session?.sender ? "Register above to see your position." : "Verify your number to see your position."}
                 </p>
               )}
             </div>

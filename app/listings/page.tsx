@@ -19,6 +19,7 @@ interface Listing {
   owner_company: string | null;
   owner_role: string;
   owner_address: string;
+  images: number;
   tx: string | null;
 }
 
@@ -70,11 +71,15 @@ export default function Listings() {
               <span>{l.title}</span>
               <span>{KIND_LABEL[l.kind] ?? l.kind}</span>
             </h2>
+            {l.images > 0 && (
+              /* eslint-disable-next-line @next/next/no-img-element */
+              <img className="cover" src={`/api/listings/${l.id}/image/0`} alt={l.title} />
+            )}
             <div className="body">
               <div className="price">{kes(l.price_kes)}</div>
               <p>{l.description}</p>
               <div className="review-meta">
-                {l.location} · {l.owner_company ?? l.owner} · <AddressLink address={l.owner_address} /> · <TxLink hash={l.tx} label="listed on chain" />
+                {l.location} · {l.owner_company ?? l.owner}, verified · <AddressLink address={l.owner_address} /> · <TxLink hash={l.tx} label="on chain" />
               </div>
               <ul className="ms">
                 {l.milestones.map((m, i) => (
