@@ -5,32 +5,41 @@ import { z } from "zod";
 import { generateOtp, hashOtp } from "@/lib/auth";
 import { normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
+import { normaliseEmail, sendEmail } from "@/lib/email";
 import { sendSms } from "@/lib/sms";
 
-const bodySchema = z.object({
-  phone: z.string().trim().regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678"),
-});
+/**
+ * Send a one-time code to a phone number or an email address. Typing it
+ * back proves the handset or the inbox. Buyers use the number they pay
+ * from; sellers, developers, companies and senders abroad use email and
+ * add a number afterwards.
+ */
+const bodySchema = z
+  .object({
+    phone: z.string().trim().regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678").optional(),
+    email: z.string().trim().email("Enter a valid email address").optional(),
+  })
+  .refine((b) => !!b.phone !== !!b.email, { message: "Send either a phone number or an email address" });
 
 const CODE_MINUTES = 5;
 const RESEND_SECONDS = 60;
 
-/** Send a one-time code to the number; typing it back proves the handset. */
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
   }
-  const phone = normaliseMsisdn(parsed.data.phone);
+  const subject = parsed.data.phone ? normaliseMsisdn(parsed.data.phone) : normaliseEmail(parsed.data.email!);
   const database = db();
 
-  // One live code per number at a time; a resend inside the window is
-  // refused rather than stacking codes, which also throttles SMS spend.
+  // One live code per subject at a time; a resend inside the window is
+  // refused rather than stacking codes, which also throttles message spend.
   const recent = await database
     .select({ createdAt: schema.otpCodes.createdAt })
     .from(schema.otpCodes)
     .where(
       and(
-        eq(schema.otpCodes.phone, phone),
+        eq(schema.otpCodes.phone, subject),
         gt(schema.otpCodes.createdAt, new Date(Date.now() - RESEND_SECONDS * 1000)),
       ),
     );
@@ -42,21 +51,24 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   const code = generateOtp();
-  await database.delete(schema.otpCodes).where(eq(schema.otpCodes.phone, phone));
+  await database.delete(schema.otpCodes).where(eq(schema.otpCodes.phone, subject));
   await database.insert(schema.otpCodes).values({
-    phone,
-    codeHash: hashOtp(phone, code),
+    phone: subject,
+    codeHash: hashOtp(subject, code),
     expiresAt: new Date(Date.now() + CODE_MINUTES * 60 * 1000),
   });
 
-  const sent = await sendSms(phone, `${code} is your Datum code. It expires in ${CODE_MINUTES} minutes.`);
+  const text = `${code} is your Datum code. It expires in ${CODE_MINUTES} minutes.`;
+  const sent = parsed.data.phone
+    ? await sendSms(subject, text)
+    : await sendEmail(subject, "Your Datum sign-in code", text);
 
   return NextResponse.json({
     ok: true,
-    phone,
+    subject,
     delivered: sent.delivered,
     message: sent.delivered
-      ? `Code sent to ${phone}.`
-      : `No SMS provider is configured; the code was written to the server log.`,
+      ? `Code sent to ${subject}.`
+      : `No ${parsed.data.phone ? "SMS" : "email"} provider is configured; the code was written to the server log.`,
   });
 }

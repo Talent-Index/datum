@@ -37,16 +37,26 @@ function safeEqual(a: string, b: string): boolean {
   return x.length === y.length && timingSafeEqual(x, y);
 }
 
+/**
+ * A session names one subject: a phone number or an email address, proven
+ * by a code sent to it. Whichever it is, the managed wallet is derived from
+ * that string, so the subject is the identity and everything else hangs
+ * off it.
+ */
 export interface SenderSession {
-  phone: string;
+  subject: string;
+  phone: string | null;
+  email: string | null;
   issuedAt: number;
   expiresAt: number;
 }
 
-export function issueSenderToken(phone: string): string {
+export function issueSenderToken(subject: { phone: string } | { email: string }): string {
   const now = Date.now();
   const session: SenderSession = {
-    phone,
+    subject: "phone" in subject ? subject.phone : subject.email,
+    phone: "phone" in subject ? subject.phone : null,
+    email: "email" in subject ? subject.email : null,
     issuedAt: now,
     expiresAt: now + SESSION_DAYS * 24 * 60 * 60 * 1000,
   };
@@ -59,14 +69,22 @@ export function readSenderToken(token: string | undefined): SenderSession | null
   const [payload, signature] = token.split(".");
   if (!payload || !signature) return null;
   if (!safeEqual(sign(payload), signature)) return null;
-  let session: SenderSession;
+  let raw: Partial<SenderSession>;
   try {
-    session = JSON.parse(Buffer.from(payload, "base64url").toString()) as SenderSession;
+    raw = JSON.parse(Buffer.from(payload, "base64url").toString()) as Partial<SenderSession>;
   } catch {
     return null;
   }
-  if (typeof session.phone !== "string" || session.expiresAt < Date.now()) return null;
-  return session;
+  // Cookies issued before email sign-in carried only a phone; they stay valid.
+  const subject = raw.subject ?? raw.phone;
+  if (typeof subject !== "string" || typeof raw.expiresAt !== "number" || raw.expiresAt < Date.now()) return null;
+  return {
+    subject,
+    phone: raw.phone ?? (subject.includes("@") ? null : subject),
+    email: raw.email ?? (subject.includes("@") ? subject : null),
+    issuedAt: raw.issuedAt ?? 0,
+    expiresAt: raw.expiresAt,
+  };
 }
 
 function cookieValue(request: Request, name: string): string | undefined {
@@ -135,6 +153,6 @@ export function generateOtp(): string {
 }
 
 /** Codes are stored hashed; a leaked table does not leak live codes. */
-export function hashOtp(phone: string, code: string): string {
-  return createHmac("sha256", secret()).update(`${phone}:${code}`).digest("hex");
+export function hashOtp(subject: string, code: string): string {
+  return createHmac("sha256", secret()).update(`${subject}:${code}`).digest("hex");
 }

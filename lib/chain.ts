@@ -201,8 +201,8 @@ export const surveyorWallet = () => walletFor("SURVEYOR_KEY");
  * clearing it. A sender who wants a guarantee we cannot sign for them needs
  * to hold the key themselves; the seam for that is this function.
  */
-export function senderWallet(phone: string): { client: WalletClient; account: Account } {
-  const account = buyerAccount(phone);
+export function senderWallet(identifier: string): { client: WalletClient; account: Account } {
+  const account = identifier.includes("@") ? managedAccount(identifier.toLowerCase()) : buyerAccount(identifier);
   return { client: createWalletClient({ account, chain: chain(), transport: http() }), account };
 }
 
@@ -225,8 +225,16 @@ export function normaliseMsisdn(raw: string): string {
  * refunds spendable; the buyer never sees the key and never signs.
  */
 export function buyerAccount(phone: string): Account {
+  return managedAccount(normaliseMsisdn(phone));
+}
+
+/**
+ * Any identity string in, managed account out: a normalised phone number or
+ * a lower-cased email address. The caller normalises; this only derives.
+ */
+export function managedAccount(identifier: string): Account {
   const seed = requireEnv("BUYER_MASTER_SEED");
-  return privateKeyToAccount(keccak256(toBytes(`${seed}:${normaliseMsisdn(phone)}`)));
+  return privateKeyToAccount(keccak256(toBytes(`${seed}:${identifier}`)));
 }
 
 export function revertReason(error: unknown): string {
