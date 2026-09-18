@@ -85,7 +85,7 @@ export default function Listings() {
                 {l.project_id ? (
                   <>
                     <Link className="btn" href={`/buy?project=${l.project_id}`}>Commit and pay in</Link>
-                    <Link className="btn ghost" href={`/?project=${l.project_id}`}>Drawdown register</Link>
+                    <Link className="btn ghost" href={`/register?project=${l.project_id}`}>Drawdown register</Link>
                   </>
                 ) : null}
               </div>

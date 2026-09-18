@@ -416,7 +416,7 @@ export default function Buy() {
       <footer>
         <span>Your deposit is held in escrow, not by the developer</span>
         <span>
-          <Link href={state ? `/?project=${state.project}` : "/"}>Drawdown register</Link>
+          <Link href={state ? `/register?project=${state.project}` : "/register"}>Drawdown register</Link>
         </span>
       </footer>
     </div>

@@ -337,6 +337,14 @@ None of those registers is authoritative for land title. That stays a Lands Regi
 
 Holding buyers' money in escrow is regulated activity in Kenya. This is an MVP for demonstration, not a licensed service.
 
+## Pages
+
+- `/` is the front door: what Datum does, live figures, and a card per role that sends buyers to the listings, sellers, developers and companies to open an account with that role preselected, trustees to their desk, and the operator to the register.
+- `/listings` shows what is live. Every listing there has a verified owner, an assigned trustee and a deployed escrow.
+- `/account` is where a person proves their number, opens their account, passes the identity check, and does the work of their role.
+- `/buy?project=<id>` is where a buyer or sender commits, pays in, and where the holder of the second signature approves a milestone.
+- `/register?project=<id>` is the drawdown register: evidence, countersigning, public-record checks, the buyer ledger, and the operator's review panels.
+
 ## Demo console
 
 The demo console uses real image uploads rather than canned fraud scenarios.

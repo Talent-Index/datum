@@ -243,3 +243,25 @@ details[open]>summary{margin-bottom:12px}
 .ms li{display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid var(--rule-soft);color:var(--ink)}
 .ms li span{font-family:var(--mono);color:var(--muted)}
 a.tx{font-family:var(--mono);font-size:12px;font-weight:500}
+
+/* ── homepage ───────────────────────────────────────────── */
+.masthead.hero{padding:44px 36px 26px}
+.masthead.hero h1{font-size:clamp(30px,4.4vw,48px);max-width:20ch;margin-bottom:14px}
+.hero-sub{max-width:66ch;font-size:15.5px;line-height:1.55;color:rgba(255,255,255,.85);margin:0 0 22px}
+.section-title{font-size:20px;font-weight:800;letter-spacing:-.01em;margin:8px 0 14px}
+.roles{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-bottom:30px}
+.role-card{
+  display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--rule-soft);
+  border-radius:var(--radius);padding:18px 18px 16px;box-shadow:var(--shadow);color:var(--ink);
+  text-decoration:none;font-weight:500;transition:transform .12s,box-shadow .12s,border-color .12s;
+  border-top:4px solid var(--green);
+}
+.role-card:hover{transform:translateY(-2px);text-decoration:none;border-color:var(--green);box-shadow:0 12px 28px -12px rgba(20,33,27,.3)}
+.role-card .pill{align-self:flex-start;background:var(--green-soft);color:var(--green)}
+.role-card b{font-size:15px;line-height:1.35;letter-spacing:-.005em}
+.role-card p{margin:0;font-size:13px;line-height:1.5;color:var(--muted);flex:1}
+.role-action{font-weight:700;color:var(--green);font-size:13.5px}
+.role-seller,.role-developer,.role-company{border-top-color:var(--clay)}
+.role-seller .pill,.role-developer .pill,.role-company .pill{background:var(--clay-soft);color:var(--clay)}
+.role-trustee,.role-operator{border-top-color:var(--ink)}
+.role-trustee .pill,.role-operator .pill{background:var(--sunk);color:var(--ink)}

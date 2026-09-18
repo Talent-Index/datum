@@ -71,6 +71,15 @@ export default function AccountPage() {
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
   const [open, setOpen] = useState({ role: "buyer", displayName: "", companyName: "", registrationNumber: "" });
+  // The homepage sends people here with the role they chose; a trustee has
+  // no self-service sign-up, so that choice only changes the explanation.
+  const [wanted, setWanted] = useState<string | null>(null);
+  useEffect(() => {
+    const role = new URLSearchParams(window.location.search).get("role");
+    if (!role) return;
+    setWanted(role);
+    if (["buyer", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
+  }, []);
   const [kycForm, setKycForm] = useState({ fullName: "", idType: "national_id", idNumber: "" });
   const docRef = useRef<HTMLInputElement>(null);
   const [listing, setListing] = useState({
@@ -162,9 +171,13 @@ export default function AccountPage() {
       {!signedIn && (
         <div className="cols">
           <section className="panel">
-            <h2><span>Prove your number</span><span>One-time code by SMS</span></h2>
+            <h2><span>{wanted ? `Continue as ${wanted === "trustee" ? "a trustee" : wanted === "operator" ? "the operator" : `a ${wanted}`}` : "Prove your number"}</span><span>One-time code by SMS</span></h2>
             <div className="body">
-              <p>Every account is tied to an M-Pesa number. We send a six-digit code to it; nothing else is asked of you.</p>
+              {wanted === "trustee" ? (
+                <p>Trustees are appointed by the platform. Sign in with the number you were appointed on and your desk opens; if you have not been appointed, ask the operator.</p>
+              ) : (
+                <p>Every account is tied to an M-Pesa number. We send a six-digit code to it; nothing else is asked of you.</p>
+              )}
               <div className="row">
                 <div>
                   <label htmlFor="phone">M-Pesa number</label>
@@ -376,7 +389,7 @@ export default function AccountPage() {
                     <tbody>
                       {view!.listings.map((l) => (
                         <tr key={l.id}>
-                          <td>{l.title}{l.project_id && <> <Link href={`/?project=${l.project_id}`}>register →</Link></>}</td>
+                          <td>{l.title}{l.project_id && <> <Link href={`/register?project=${l.project_id}`}>register →</Link></>}</td>
                           <td><span className="pill">{l.status.replace("_", " ")}</span>{l.note ? <div className="hint">{l.note}</div> : null}</td>
                           <td className="n">{kes(l.price_kes)}</td>
                           <td className="n"><TxLink hash={l.tx} /></td>
