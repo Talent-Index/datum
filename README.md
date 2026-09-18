@@ -356,6 +356,10 @@ There is deliberately no `/api/reset`.
 
 On a persistent chain, resetting the system means creating a new project, which deploys a fresh escrow.
 
+## Team
+
+Daniel Mwihoti and Soni Mwangi, founders. The pitch deck and brochure are in `pitch/`.
+
 ## Personal data
 
 Buyer phone numbers and identity information are stored in Postgres and never written to the blockchain.
