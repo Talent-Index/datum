@@ -14,7 +14,7 @@ import {
   surveyorWallet,
 } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { isRemittance, resolveProject } from "@/lib/project";
+import { isRemittance, missingProjectMessage, resolveProject } from "@/lib/project";
 import { logActivity } from "@/lib/registry";
 
 const bodySchema = z.object({ role: z.union([z.literal(1), z.literal(2)]) });
@@ -35,7 +35,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   // On a remittance build attester 1 is the sender, who signs from their own
   // page with their own session; the surveyor key is not on that contract.

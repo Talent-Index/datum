@@ -4,16 +4,13 @@ import { toHex } from "viem";
 
 import { KES_UNITS, escrowAbi, kesAbi, publicClient } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { isRemittance, resolveProject, roleNames } from "@/lib/project";
+import { isRemittance, missingProjectMessage, resolveProject, roleNames } from "@/lib/project";
 
 /** What a buyer, the platform, and a judge all look at: the live project. */
 export async function GET(request: Request): Promise<NextResponse> {
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json(
-      { error: "Specify ?project=<id>; more than one project exists" },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   const ROLE_NAMES = roleNames(project);
 

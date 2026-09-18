@@ -18,7 +18,7 @@ import { db, dbPool, schema } from "@/lib/db";
 import { stageClassifier } from "@/lib/evidence/classifier";
 import { PostgresSeenHashStore } from "@/lib/evidence/store";
 import { EvidenceVerifier, type Verdict } from "@/lib/evidence/verifier";
-import { resolveProject } from "@/lib/project";
+import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -68,7 +68,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
 
   const chain = publicClient();

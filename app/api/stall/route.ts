@@ -9,7 +9,7 @@ import {
   publicClient,
   revertReason,
 } from "@/lib/chain";
-import { resolveProject } from "@/lib/project";
+import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -23,7 +23,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   try {
     const { client, account } = platformWallet();

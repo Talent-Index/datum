@@ -121,6 +121,14 @@ export async function resolveProject(request: Request): Promise<Project | null> 
   return all.length === 1 ? all[0]! : null;
 }
 
+/** The message to send back when resolveProject found nothing. */
+export async function missingProjectMessage(request: Request): Promise<string> {
+  const id = new URL(request.url).searchParams.get("project");
+  if (id) return `No project '${id}'`;
+  const all = await listProjects();
+  return all.length === 0 ? "No projects exist yet" : "Specify ?project=<id>; more than one project exists";
+}
+
 export interface NewProject {
   id: string;
   name: string;

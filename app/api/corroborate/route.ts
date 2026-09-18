@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { corroborate } from "@/lib/data/corroborate";
 import { db, schema } from "@/lib/db";
-import { resolveProject } from "@/lib/project";
+import { missingProjectMessage, resolveProject } from "@/lib/project";
 
 const bodySchema = z.object({ developer: z.string().min(1).max(200).optional() });
 
@@ -18,7 +18,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   const developer = parsed.data.developer ?? project.developerName;
 

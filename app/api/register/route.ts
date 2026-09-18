@@ -5,7 +5,7 @@ import { z } from "zod";
 import { currentSender } from "@/lib/auth";
 import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
-import { resolveProject } from "@/lib/project";
+import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { accountByPhone } from "@/lib/accounts";
 import { logActivity } from "@/lib/registry";
 
@@ -36,7 +36,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   const database = db();
   const address = buyerAccount(phone).address;

@@ -12,7 +12,7 @@ import {
 import { currentSender } from "@/lib/auth";
 import { currentAccount } from "@/lib/accounts";
 import { db, schema } from "@/lib/db";
-import { resolveProject } from "@/lib/project";
+import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -32,7 +32,7 @@ const bodySchema = z.object({
 export async function POST(request: Request): Promise<NextResponse> {
   const project = await resolveProject(request);
   if (!project) {
-    return NextResponse.json({ error: "Specify ?project=<id>" }, { status: 400 });
+    return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   if (!project.senderPhone && !project.trusteeAccountId) {
     return NextResponse.json(
