@@ -134,7 +134,7 @@ export default function AccountPage() {
       await load();
     });
 
-  const kycBadge = account ? ({ none: "not started", pending: "under review", verified: "verified", rejected: "not verified" } as Record<string, string>)[account.kyc_status] : "";
+  const kycBadge = !account ? "" : account.role === "trustee" ? "appointed by the platform" : ({ none: "not started", pending: "under review", verified: "verified", rejected: "not verified" } as Record<string, string>)[account.kyc_status];
 
   return (
     <div className="wrap">
