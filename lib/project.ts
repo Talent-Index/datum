@@ -37,6 +37,9 @@ export interface Project {
   developerAddress: Address;
   senderPhone: string | null;
   fundingTargetKes: number | null;
+  ownerAccountId: number | null;
+  trusteeAccountId: number | null;
+  listingId: string | null;
   milestones: ProjectMilestone[];
 }
 
@@ -66,6 +69,9 @@ function hydrate(
     developerAddress: row.developerAddress as Address,
     senderPhone: row.senderPhone,
     fundingTargetKes: row.fundingTargetKes,
+    ownerAccountId: row.ownerAccountId,
+    trusteeAccountId: row.trusteeAccountId,
+    listingId: row.listingId,
     milestones: milestones
       .sort((a, b) => a.milestoneIndex - b.milestoneIndex)
       .map((m) => ({
@@ -125,6 +131,15 @@ export interface NewProject {
   developerAddress: Address;
   /** Set for a remittance build: this number becomes attester 1. */
   senderPhone?: string | null;
+  /**
+   * The trustee's number, when a listing was approved with one assigned.
+   * Their managed wallet becomes attester 1 and they countersign from their
+   * dashboard. Ignored when senderPhone is set.
+   */
+  trusteePhone?: string | null;
+  ownerAccountId?: number | null;
+  trusteeAccountId?: number | null;
+  listingId?: string | null;
   fundingTargetKes?: number | null;
   milestones: Array<{ description: string; stage: string; percent: number }>;
   /** Seconds of silence before anyone may declare the project stalled. */
@@ -157,8 +172,9 @@ export async function createProject(input: NewProject): Promise<Project> {
   const { privateKeyToAccount } = await import("viem/accounts");
   const oracleAddress = privateKeyToAccount(oracle as `0x${string}`).address;
   const senderPhone = input.senderPhone ? normaliseMsisdn(input.senderPhone) : null;
-  const attester1 = senderPhone
-    ? buyerAccount(senderPhone).address
+  const managedAttester = senderPhone ?? (input.trusteePhone ? normaliseMsisdn(input.trusteePhone) : null);
+  const attester1 = managedAttester
+    ? buyerAccount(managedAttester).address
     : privateKeyToAccount(surveyor as `0x${string}`).address;
 
   const { client, account } = platformWallet();
@@ -205,7 +221,9 @@ export async function createProject(input: NewProject): Promise<Project> {
   await send(kesAddress, "mint", [account.address, SETTLEMENT_FLOAT_KES * KES_UNITS]);
   await send(kesAddress, "approve", [contractAddress, SETTLEMENT_FLOAT_KES * KES_UNITS]);
 
-  if (senderPhone) {
+  // A managed attester pays its own gas to sign, so it is topped up once
+  // here rather than begging for AVAX at the moment it matters.
+  if (managedAttester && (await chain.getBalance({ address: attester1 })) < SENDER_GAS / 2n) {
     const hash = await client.sendTransaction({
       account,
       to: attester1,
@@ -228,6 +246,9 @@ export async function createProject(input: NewProject): Promise<Project> {
     developerAddress: input.developerAddress,
     senderPhone,
     fundingTargetKes: input.fundingTargetKes ?? null,
+    ownerAccountId: input.ownerAccountId ?? null,
+    trusteeAccountId: input.trusteeAccountId ?? null,
+    listingId: input.listingId ?? null,
   });
   await database.insert(schema.milestones).values(
     input.milestones.map((m, i) => ({

@@ -38,8 +38,111 @@ export const projects = pgTable("projects", {
   // What the developer needs raised before the build is fully funded, in
   // whole shillings. Buyers commit against it and deposit toward it.
   fundingTargetKes: integer("funding_target_kes"),
+  // Who posted the listing this project came from, and which trustee holds
+  // the second signature on its escrow. Null on projects created by hand.
+  ownerAccountId: integer("owner_account_id"),
+  trusteeAccountId: integer("trustee_account_id"),
+  listingId: text("listing_id"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * One account per phone number, with a role and a managed address. The
+ * address is derived from the number, so a buyer's escrow wallet and their
+ * account address are the same thing.
+ */
+export const accounts = pgTable(
+  "accounts",
+  {
+    id: serial("id").primaryKey(),
+    phone: text("phone").notNull(),
+    role: text("role").notNull(), // buyer | seller | developer | company | trustee
+    displayName: text("display_name").notNull(),
+    companyName: text("company_name"),
+    registrationNumber: text("registration_number"),
+    address: text("address").notNull(),
+    kycStatus: text("kyc_status").notNull().default("none"), // none | pending | verified | rejected
+    registryTxHash: text("registry_tx_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("accounts_phone").on(table.phone), uniqueIndex("accounts_address").on(table.address)],
+);
+
+/**
+ * An identity check as submitted and as reviewed. The document itself is
+ * not kept, only its hash and enough of the number to recognise it; the
+ * verdict and the reviewer are recorded on chain against that hash.
+ */
+export const kycSubmissions = pgTable(
+  "kyc_submissions",
+  {
+    id: serial("id").primaryKey(),
+    accountId: integer("account_id").notNull().references(() => accounts.id),
+    fullName: text("full_name").notNull(),
+    idType: text("id_type").notNull(), // national_id | passport | company_registration
+    idNumberHash: text("id_number_hash").notNull(),
+    idLast4: text("id_last4").notNull(),
+    documentSha256: text("document_sha256").notNull(),
+    documentName: text("document_name").notNull(),
+    status: text("status").notNull().default("pending"), // pending | verified | rejected
+    reviewerAccountId: integer("reviewer_account_id"),
+    reviewNote: text("review_note"),
+    txHash: text("tx_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
+  },
+  (table) => [index("kyc_submissions_account").on(table.accountId)],
+);
+
+/**
+ * What a seller, developer or company advertises. Reviewed by a trustee;
+ * on approval a development or build gets its escrow deployed and the
+ * listing points at the project buyers commit to.
+ */
+export const listings = pgTable(
+  "listings",
+  {
+    id: text("id").primaryKey(),
+    ownerAccountId: integer("owner_account_id").notNull().references(() => accounts.id),
+    kind: text("kind").notNull(), // property_sale | build | development
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    locationName: text("location_name").notNull(),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    priceKes: integer("price_kes").notNull(),
+    milestones: jsonb("milestones").notNull(),
+    status: text("status").notNull().default("pending_review"), // pending_review | live | rejected | withdrawn
+    projectId: text("project_id"),
+    trusteeAccountId: integer("trustee_account_id"),
+    reviewNote: text("review_note"),
+    contentHash: text("content_hash").notNull(),
+    txHash: text("tx_hash"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("listings_owner").on(table.ownerAccountId), index("listings_status").on(table.status)],
+);
+
+/**
+ * Everything anyone did, with the hash that was written to the registry
+ * and the transaction that carried it. A null transaction means the write
+ * failed and the replay job will retry it.
+ */
+export const activities = pgTable(
+  "activities",
+  {
+    id: serial("id").primaryKey(),
+    accountId: integer("account_id"),
+    actorAddress: text("actor_address").notNull(),
+    kind: text("kind").notNull(),
+    payload: jsonb("payload").notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    txHash: text("tx_hash"),
+    error: text("error"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("activities_account").on(table.accountId), index("activities_created").on(table.createdAt)],
+);
 
 /**
  * One-time codes, stored hashed. A phone number is proven by typing back a

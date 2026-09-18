@@ -13,6 +13,7 @@ import {
 } from "./chain";
 import { stkQuery } from "./daraja";
 import { db, schema } from "./db";
+import { logActivity } from "./registry";
 import { getProject } from "./project";
 
 /**
@@ -94,6 +95,16 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
         completedAt: new Date(),
       })
       .where(eq(schema.pendingPayments.id, paymentId));
+    const [holder] = await database
+      .select({ id: schema.accounts.id })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.phone, phone));
+    await logActivity({
+      accountId: holder?.id ?? null,
+      actorAddress: walletAddress,
+      kind: "deposit.confirmed",
+      payload: { project: project.id, kes: payment.amountKes, receipt: receipt ?? payment.mpesaReceipt, depositTx: hash },
+    });
     return { status: "confirmed", txHash: hash };
   } catch (error) {
     // The M-Pesa money is in; the claim is not. Record it for replay rather
