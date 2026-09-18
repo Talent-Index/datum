@@ -25,6 +25,7 @@ interface AccountView {
     address: string;
     kyc_status: string;
     registry_tx: string | null;
+    registered_on_chain: boolean;
   } | null;
   kyc: {
     id: number;
@@ -245,7 +246,7 @@ export default function AccountPage() {
                 <table>
                   <tbody>
                     <tr><td>Address</td><td className="n"><AddressLink address={account.address} /></td></tr>
-                    <tr><td>Registered on chain</td><td className="n"><TxLink hash={account.registry_tx} /></td></tr>
+                    <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <TxLink hash={account.registry_tx} /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
                     <tr><td>Identity</td><td className="n">{kycBadge}</td></tr>
                   </tbody>
                 </table>

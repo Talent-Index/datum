@@ -85,6 +85,17 @@ async function write(functionName: "register" | "setKyc" | "postListing" | "setL
 export const registerOnChain = (who: Address, role: Role): Promise<Hex> =>
   write("register", [who, ROLE_CODE[role]]);
 
+/** Whether the registry already knows this address, whatever our row says. */
+export async function isRegisteredOnChain(who: Address): Promise<boolean> {
+  const [role] = await publicClient().readContract({
+    address: registryAddress(),
+    abi: registryAbi,
+    functionName: "accounts",
+    args: [who],
+  });
+  return role !== 0;
+}
+
 export const setKycOnChain = (who: Address, verified: boolean, docHash: Hex, reviewer: Address): Promise<Hex> =>
   write("setKyc", [who, verified, docHash, reviewer]);
 

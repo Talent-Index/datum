@@ -4,7 +4,7 @@ import type { Address } from "viem";
 import { currentSender } from "./auth";
 import { buyerAccount, normaliseMsisdn } from "./chain";
 import { db, schema } from "./db";
-import { logActivity, registerOnChain, type Role, ROLES } from "./registry";
+import { isRegisteredOnChain, logActivity, registerOnChain, type Role, ROLES } from "./registry";
 
 /**
  * Accounts sit on top of phone sessions. The session proves the number; the
@@ -93,11 +93,20 @@ export async function createAccount(input: NewAccount): Promise<Account> {
   return { ...account, registryTxHash };
 }
 
-/** Finish a registration whose chain write failed at sign-up. */
+/**
+ * Finish a registration whose chain write failed at sign-up. If the chain
+ * already knows the address, the write landed and only the row was lost;
+ * the transaction hash is gone but the fact is not, and the row records it.
+ */
+export const REGISTERED_WITHOUT_RECEIPT = "registered";
+
 export async function ensureRegistered(account: Account): Promise<Account> {
   if (account.registryTxHash) return account;
   try {
-    const registryTxHash = await registerOnChain(account.address as Address, account.role as Role);
+    const address = account.address as Address;
+    const registryTxHash = (await isRegisteredOnChain(address))
+      ? REGISTERED_WITHOUT_RECEIPT
+      : await registerOnChain(address, account.role as Role);
     await db().update(schema.accounts).set({ registryTxHash }).where(eq(schema.accounts.id, account.id));
     return { ...account, registryTxHash };
   } catch {
@@ -120,7 +129,8 @@ export function publicAccount(a: Account) {
     registration_number: a.registrationNumber,
     address: a.address,
     kyc_status: a.kycStatus,
-    registry_tx: a.registryTxHash,
+    registry_tx: a.registryTxHash?.startsWith("0x") ? a.registryTxHash : null,
+    registered_on_chain: a.registryTxHash !== null,
     created_at: a.createdAt,
   };
 }
