@@ -32,7 +32,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "That number already has an account; a trustee must be appointed on a fresh number" }, { status: 409 });
   }
   try {
-    const account = await createAccount({ phone: parsed.data.phone, role: "trustee", displayName: parsed.data.displayName });
+    const account = await createAccount({ subject: parsed.data.phone, role: "trustee", displayName: parsed.data.displayName });
     return NextResponse.json({ ok: true, trustee: publicAccount(account), message: `${account.displayName} appointed as trustee at ${account.address}.` });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Could not appoint the trustee" }, { status: 400 });

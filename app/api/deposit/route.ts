@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { currentSender } from "@/lib/auth";
+import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { stkPush } from "@/lib/daraja";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
-import { accountByPhone, accountAddress } from "@/lib/accounts";
+import { feeRequired, payerPhone } from "@/lib/accounts";
 import { logActivity } from "@/lib/registry";
 
 const bodySchema = z.object({
@@ -19,17 +19,20 @@ const bodySchema = z.object({
  * on the callback, never here.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const session = currentSender(request);
-  if (!session) {
-    return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  const payer = await payerPhone(request);
+  if (!payer) {
+    return NextResponse.json({ error: "Verify your number first, or add the M-Pesa number you will pay from" }, { status: 401 });
+  }
+  if (payer.account && feeRequired(payer.account)) {
+    return NextResponse.json({ error: "Pay the platform fee before paying in" }, { status: 402 });
   }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Body must be { kes } with a positive integer" }, { status: 400 });
   }
   const { kes } = parsed.data;
-  // The prompt goes to the number the session proves — already canonical.
-  const phone = session.phone;
+  // The prompt goes to the number the session or the account proves.
+  const { phone, account } = payer;
 
   const project = await resolveProject(request);
   if (!project) {
@@ -50,15 +53,15 @@ export async function POST(request: Request): Promise<NextResponse> {
     checkoutRequestId: push.CheckoutRequestID,
     merchantRequestId: push.MerchantRequestID,
     projectId: project.id,
+    accountId: account?.id ?? null,
     phone,
     amountKes: kes,
     status: "pending",
   });
 
-  const account = await accountByPhone(phone);
   await logActivity({
     accountId: account?.id ?? null,
-    actorAddress: accountAddress(phone),
+    actorAddress: (account?.address as `0x${string}` | undefined) ?? buyerAccount(phone).address,
     kind: "deposit.requested",
     payload: { project: project.id, kes, checkoutRequestId: push.CheckoutRequestID },
   });

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { currentSender } from "@/lib/auth";
@@ -15,7 +15,8 @@ export async function GET(request: Request): Promise<NextResponse> {
   const session = currentSender(request);
   if (!session) return NextResponse.json({ session: null, account: null });
   let account = await currentAccount(request);
-  if (!account) return NextResponse.json({ session: { phone: session.phone }, account: null });
+  const who = { subject: session.subject, phone: session.phone, email: session.email };
+  if (!account) return NextResponse.json({ session: who, account: null });
   account = await ensureRegistered(account);
   const database = db();
 
@@ -39,7 +40,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     })
     .from(schema.buyers)
     .innerJoin(schema.projects, eq(schema.projects.id, schema.buyers.projectId))
-    .where(eq(schema.buyers.phone, account.phone));
+    .where(eq(schema.buyers.walletAddress, account.address));
   const trusteeOf =
     account.role === "trustee"
       ? await database
@@ -48,9 +49,17 @@ export async function GET(request: Request): Promise<NextResponse> {
           .where(eq(schema.projects.trusteeAccountId, account.id))
       : [];
 
+  const [fee] = await database
+    .select({ status: schema.pendingPayments.status, created_at: schema.pendingPayments.createdAt, reason: schema.pendingPayments.resultDescription })
+    .from(schema.pendingPayments)
+    .where(and(eq(schema.pendingPayments.accountId, account.id), eq(schema.pendingPayments.purpose, "fee")))
+    .orderBy(desc(schema.pendingPayments.id))
+    .limit(1);
+
   return NextResponse.json({
-    session: { phone: session.phone },
+    session: who,
     account: publicAccount(account),
+    fee_payment: fee ?? null,
     kyc: kyc
       ? {
           id: kyc.id,
@@ -81,18 +90,18 @@ export async function GET(request: Request): Promise<NextResponse> {
 }
 
 const bodySchema = z.object({
-  role: z.enum(["buyer", "seller", "developer", "company"]),
+  role: z.enum(["buyer", "sender", "seller", "developer", "company"]),
   displayName: z.string().trim().min(2).max(80),
   companyName: z.string().trim().max(120).optional(),
   registrationNumber: z.string().trim().max(40).optional(),
 });
 
-/** Open an account on the proven number. One per number; the role is chosen once. */
+/** Open an account on the proven number or email. One per subject; the role is chosen once. */
 export async function POST(request: Request): Promise<NextResponse> {
   const session = currentSender(request);
   if (!session) return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
   if (await currentAccount(request)) {
-    return NextResponse.json({ error: "This number already has an account" }, { status: 409 });
+    return NextResponse.json({ error: "This address already has an account" }, { status: 409 });
   }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
@@ -106,7 +115,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "A company account needs the registered company name" }, { status: 400 });
   }
   try {
-    const account = await createAccount({ phone: session.phone, ...input });
+    const account = await createAccount({ subject: session.subject, ...input });
     return NextResponse.json({
       ok: true,
       account: publicAccount(account),

@@ -55,6 +55,9 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
     return { status: "failed", reason: verdict.reason };
   }
 
+  if (payment.purpose === "fee") return creditFee(paymentId, payment, receipt);
+
+  if (!payment.projectId) return { status: "failed", reason: "deposit has no project" };
   const project = await getProject(payment.projectId);
   if (!project) return { status: "failed", reason: `project ${payment.projectId} not found` };
 
@@ -66,7 +69,12 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
     .select({ walletAddress: schema.buyers.walletAddress })
     .from(schema.buyers)
     .where(and(eq(schema.buyers.projectId, project.id), eq(schema.buyers.phone, phone)));
-  const walletAddress = (existing[0]?.walletAddress ?? buyerAccount(phone).address) as Address;
+  const [holderRow] = payment.accountId
+    ? await database.select().from(schema.accounts).where(eq(schema.accounts.id, payment.accountId))
+    : [];
+  const walletAddress = (existing[0]?.walletAddress ??
+    holderRow?.address ??
+    buyerAccount(phone).address) as Address;
   if (!existing.length) {
     await database
       .insert(schema.buyers)
@@ -95,10 +103,9 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
         completedAt: new Date(),
       })
       .where(eq(schema.pendingPayments.id, paymentId));
-    const [holder] = await database
-      .select({ id: schema.accounts.id })
-      .from(schema.accounts)
-      .where(eq(schema.accounts.phone, phone));
+    const [holder] = holderRow
+      ? [holderRow]
+      : await database.select({ id: schema.accounts.id }).from(schema.accounts).where(eq(schema.accounts.phone, phone));
     await logActivity({
       accountId: holder?.id ?? null,
       actorAddress: walletAddress,
@@ -116,4 +123,33 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
       .where(eq(schema.pendingPayments.id, paymentId));
     return { status: "failed", reason };
   }
+}
+
+type PendingPayment = typeof schema.pendingPayments.$inferSelect;
+
+/**
+ * A platform fee, confirmed by Safaricom, marks the account paid and proves
+ * the number it came from. Nothing goes to escrow; the record goes on chain.
+ */
+async function creditFee(paymentId: number, payment: PendingPayment, receipt?: string): Promise<CreditOutcome> {
+  const database = db();
+  if (!payment.accountId) return { status: "failed", reason: "fee has no account" };
+  const [account] = await database.select().from(schema.accounts).where(eq(schema.accounts.id, payment.accountId));
+  if (!account) return { status: "failed", reason: `account ${payment.accountId} not found` };
+
+  await database
+    .update(schema.accounts)
+    .set({ feeStatus: "paid", feePaidAt: new Date(), phoneVerified: true, phone: normaliseMsisdn(payment.phone) })
+    .where(eq(schema.accounts.id, account.id));
+  await database
+    .update(schema.pendingPayments)
+    .set({ status: "confirmed", mpesaReceipt: receipt ?? payment.mpesaReceipt, completedAt: new Date() })
+    .where(eq(schema.pendingPayments.id, paymentId));
+  const logged = await logActivity({
+    accountId: account.id,
+    actorAddress: account.address as Address,
+    kind: "fee.paid",
+    payload: { kes: payment.amountKes, receipt: receipt ?? payment.mpesaReceipt, phone: normaliseMsisdn(payment.phone) },
+  });
+  return { status: "confirmed", txHash: logged.txHash ?? "" };
 }

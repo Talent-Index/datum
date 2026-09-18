@@ -54,7 +54,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const bytes = Buffer.from(await document.arrayBuffer());
   const documentSha256 = createHash("sha256").update(bytes).digest("hex");
-  const idNumberHash = createHash("sha256").update(`${account.phone}:${parsed.data.idNumber}`).digest("hex");
+  const idNumberHash = createHash("sha256").update(`${account.subject}:${parsed.data.idNumber}`).digest("hex");
   const database = db();
 
   const [pending] = await database
@@ -114,6 +114,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       display_name: schema.accounts.displayName,
       company_name: schema.accounts.companyName,
       phone: schema.accounts.phone,
+      email: schema.accounts.email,
       address: schema.accounts.address,
     })
     .from(schema.kycSubmissions)

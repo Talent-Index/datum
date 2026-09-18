@@ -2,11 +2,10 @@ import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { currentSender } from "@/lib/auth";
 import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
-import { accountByPhone } from "@/lib/accounts";
+import { feeRequired, payerPhone } from "@/lib/accounts";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -23,15 +22,18 @@ const bodySchema = z.object({
 export async function POST(request: Request): Promise<NextResponse> {
   // The number is whatever the session proves, never what the body claims:
   // a commitment in someone else's name is the fraud this exists to stop.
-  const session = currentSender(request);
-  if (!session) {
-    return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  const payer = await payerPhone(request);
+  if (!payer) {
+    return NextResponse.json({ error: "Verify your number first, or add the M-Pesa number you will pay from" }, { status: 401 });
+  }
+  if (payer.account && feeRequired(payer.account)) {
+    return NextResponse.json({ error: "Pay the platform fee before committing" }, { status: 402 });
   }
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return NextResponse.json({ error: "Send { commitmentKes }" }, { status: 400 });
   }
-  const phone = session.phone;
+  const { phone, account } = payer;
   const { commitmentKes } = parsed.data;
 
   const project = await resolveProject(request);
@@ -39,7 +41,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: await missingProjectMessage(request) }, { status: 400 });
   }
   const database = db();
-  const address = buyerAccount(phone).address;
+  // An email account's money lives at its own address, not one derived
+  // from whatever number it happens to pay from.
+  const address = (account?.address as `0x${string}` | undefined) ?? buyerAccount(phone).address;
 
   const existing = await database
     .select({ id: schema.buyers.id, walletAddress: schema.buyers.walletAddress })
@@ -62,7 +66,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
-  const account = await accountByPhone(phone);
   await logActivity({
     accountId: account?.id ?? null,
     actorAddress: (existing[0]?.walletAddress ?? address) as `0x${string}`,

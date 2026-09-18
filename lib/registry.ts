@@ -26,14 +26,15 @@ export const registryAbi = [
   { type: "function", name: "owner", stateMutability: "view", inputs: [], outputs: [{ name: "", type: "address" }] },
 ] as const;
 
-export type Role = "buyer" | "seller" | "developer" | "company" | "trustee";
-export const ROLES: readonly Role[] = ["buyer", "seller", "developer", "company", "trustee"];
+export type Role = "buyer" | "sender" | "seller" | "developer" | "company" | "trustee";
+export const ROLES: readonly Role[] = ["buyer", "sender", "seller", "developer", "company", "trustee"];
 /** Roles a person may choose for themselves. Trustees are appointed. */
-export const SELF_SERVICE_ROLES: readonly Role[] = ["buyer", "seller", "developer", "company"];
+export const SELF_SERVICE_ROLES: readonly Role[] = ["buyer", "sender", "seller", "developer", "company"];
 /** Roles that may advertise, once their identity is verified. */
 export const LISTING_ROLES: readonly Role[] = ["seller", "developer", "company"];
 
-const ROLE_CODE: Record<Role, number> = { buyer: 1, seller: 2, developer: 3, company: 4, trustee: 5 };
+// A sender abroad is a buyer to the contract: money in, no listing rights.
+const ROLE_CODE: Record<Role, number> = { buyer: 1, sender: 1, seller: 2, developer: 3, company: 4, trustee: 5 };
 
 export function registryAddress(): Address {
   const value = process.env.REGISTRY_ADDRESS;

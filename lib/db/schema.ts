@@ -55,17 +55,48 @@ export const accounts = pgTable(
   "accounts",
   {
     id: serial("id").primaryKey(),
-    phone: text("phone").notNull(),
-    role: text("role").notNull(), // buyer | seller | developer | company | trustee
+    // The identity the address is derived from: a normalised phone number
+    // for buyers, a lower-cased email for everyone who signs in by email.
+    subject: text("subject").notNull(),
+    email: text("email"),
+    phone: text("phone"),
+    // A phone added to an email account is proven by the fee paid from it.
+    phoneVerified: boolean("phone_verified").notNull().default(false),
+    role: text("role").notNull(), // buyer | sender | seller | developer | company | trustee
     displayName: text("display_name").notNull(),
     companyName: text("company_name"),
     registrationNumber: text("registration_number"),
     address: text("address").notNull(),
     kycStatus: text("kyc_status").notNull().default("none"), // none | pending | verified | rejected
+    feeStatus: text("fee_status").notNull().default("none"), // none | pending | paid
+    feePaidAt: timestamp("fee_paid_at", { withTimezone: true }),
     registryTxHash: text("registry_tx_hash"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (table) => [uniqueIndex("accounts_phone").on(table.phone), uniqueIndex("accounts_address").on(table.address)],
+  (table) => [
+    uniqueIndex("accounts_subject").on(table.subject),
+    uniqueIndex("accounts_phone").on(table.phone),
+    uniqueIndex("accounts_email").on(table.email),
+    uniqueIndex("accounts_address").on(table.address),
+  ],
+);
+
+/**
+ * Photographs of what is listed, stored here because a serverless function
+ * has no disk. Downscaled before storage; six at most per listing.
+ */
+export const listingImages = pgTable(
+  "listing_images",
+  {
+    id: serial("id").primaryKey(),
+    listingId: text("listing_id").notNull(),
+    position: integer("position").notNull(),
+    sha256: text("sha256").notNull(),
+    contentType: text("content_type").notNull(),
+    dataBase64: text("data_base64").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("listing_images_listing").on(table.listingId, table.position)],
 );
 
 /**
@@ -208,9 +239,10 @@ export const pendingPayments = pgTable(
     id: serial("id").primaryKey(),
     checkoutRequestId: text("checkout_request_id").notNull(),
     merchantRequestId: text("merchant_request_id"),
-    projectId: text("project_id")
-      .notNull()
-      .references(() => projects.id),
+    // A deposit belongs to a project; a fee belongs to an account.
+    purpose: text("purpose").notNull().default("deposit"), // deposit | fee
+    projectId: text("project_id").references(() => projects.id),
+    accountId: integer("account_id"),
     phone: text("phone").notNull(),
     amountKes: integer("amount_kes").notNull(),
     status: text("status").notNull().default("pending"), // pending | confirmed | failed
