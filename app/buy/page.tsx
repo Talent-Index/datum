@@ -125,7 +125,7 @@ export default function Buy() {
           {!signedIn && (
             <section className="panel">
               <h2>
-                <span>1 — Prove your number</span>
+                <span>Prove your number</span>
                 <span>One-time code by SMS</span>
               </h2>
               <div className="body">
@@ -181,7 +181,7 @@ export default function Buy() {
           {signedIn && (
             <section className="panel">
               <h2>
-                <span>{me?.commitment ? "Your commitment" : "2 — Your commitment"}</span>
+                <span>Your commitment</span>
                 <span>{me?.commitment ? kes(me.commitment) : "No money moves yet"}</span>
               </h2>
               <div className="body">
@@ -214,7 +214,7 @@ export default function Buy() {
           {me && (
             <section className="panel">
               <h2>
-                <span>3 — Pay an instalment</span>
+                <span>Pay an instalment</span>
                 <span>{me.phone}</span>
               </h2>
               <div className="body">
