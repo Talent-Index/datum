@@ -69,6 +69,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     delivered: sent.delivered,
     message: sent.delivered
       ? `Code sent to ${subject}.`
-      : `No ${parsed.data.phone ? "SMS" : "email"} provider is configured; the code was written to the server log.`,
+      : process.env.OTP_TEST_CODE
+        ? `No ${parsed.data.phone ? "SMS" : "email"} provider is configured on this deployment; enter the demo code.`
+        : `No ${parsed.data.phone ? "SMS" : "email"} provider is configured; the code was written to the server log.`,
   });
 }

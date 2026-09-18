@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { hashOtp, issueSenderToken, setSenderCookie } from "@/lib/auth";
+import { hashOtp, issueSenderToken, otpTestCodeAccepted, setSenderCookie } from "@/lib/auth";
 import { normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { normaliseEmail } from "@/lib/email";
@@ -27,6 +27,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   const database = db();
 
   const [row] = await database.select().from(schema.otpCodes).where(eq(schema.otpCodes.phone, subject));
+
+  if (otpTestCodeAccepted(parsed.data.phone ? "phone" : "email", parsed.data.code)) {
+    if (row) await database.delete(schema.otpCodes).where(eq(schema.otpCodes.id, row.id));
+    const response = NextResponse.json({ ok: true, subject, demo: true });
+    setSenderCookie(response, issueSenderToken(parsed.data.phone ? { phone: subject } : { email: subject }));
+    return response;
+  }
 
   if (!row || row.expiresAt.getTime() < Date.now()) {
     return NextResponse.json({ error: "No live code for this address; request a new one" }, { status: 400 });

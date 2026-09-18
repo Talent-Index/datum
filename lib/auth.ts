@@ -156,3 +156,22 @@ export function generateOtp(): string {
 export function hashOtp(subject: string, code: string): string {
   return createHmac("sha256", secret()).update(`${subject}:${code}`).digest("hex");
 }
+
+/**
+ * A fixed demo code, for a deployment with no way to deliver real ones.
+ *
+ * Honoured only when OTP_TEST_CODE is set AND the channel has no provider
+ * configured: the moment RESEND_API_KEY or AT_API_KEY is set for that
+ * channel, the demo code stops working for it. Anyone who knows the code
+ * can sign in as anyone on that channel, so this is for demonstrations,
+ * never for a deployment holding real money. Each use is logged.
+ */
+export function otpTestCodeAccepted(channel: "phone" | "email", code: string): boolean {
+  const demo = process.env.OTP_TEST_CODE;
+  if (!demo || demo.length !== 6) return false;
+  const providerConfigured = channel === "email" ? !!process.env.RESEND_API_KEY : !!process.env.AT_API_KEY;
+  if (providerConfigured) return false;
+  if (!safeEqual(code, demo)) return false;
+  console.warn(`[otp] demo code used on the ${channel} channel; configure a provider and unset OTP_TEST_CODE`);
+  return true;
+}
