@@ -124,6 +124,50 @@ export async function createAccount(input: NewAccount): Promise<Account> {
   return { ...account, registryTxHash };
 }
 
+export async function accountByEmail(email: string): Promise<Account | null> {
+  const [row] = await db().select().from(schema.accounts).where(eq(schema.accounts.email, normaliseEmail(email)));
+  return row ?? null;
+}
+
+/**
+ * Attach an email to a phone account. Verified when a code sent to it is
+ * typed back; recorded unverified when it was given as contact detail at
+ * commitment, so staff know which is which.
+ */
+export async function setAccountEmail(account: Account, email: string, verified: boolean): Promise<Account> {
+  const normalised = normaliseEmail(email);
+  const clash = await accountByEmail(normalised);
+  if (clash && clash.id !== account.id) {
+    throw new Error("That email already belongs to another account; sign in with it instead");
+  }
+  const [row] = await db()
+    .update(schema.accounts)
+    .set({ email: normalised, emailVerified: verified || (account.email === normalised && account.emailVerified) })
+    .where(eq(schema.accounts.id, account.id))
+    .returning();
+  return row!;
+}
+
+/**
+ * A buyer who commits without an account gets one on the number they
+ * proved, with the name and email they gave, so the commitment is traceable
+ * to a person and an address from the first shilling.
+ */
+export async function ensureBuyerAccount(subject: string, displayName: string, email: string | null): Promise<Account> {
+  const existing = await accountBySubject(subject);
+  if (existing) {
+    let account = existing;
+    if (displayName.trim() && displayName.trim() !== account.displayName) {
+      const [row] = await db().update(schema.accounts).set({ displayName: displayName.trim() }).where(eq(schema.accounts.id, account.id)).returning();
+      account = row!;
+    }
+    if (email && normaliseEmail(email) !== account.email) account = await setAccountEmail(account, email, false);
+    return account;
+  }
+  const account = await createAccount({ subject, role: "buyer", displayName });
+  return email ? setAccountEmail(account, email, false) : account;
+}
+
 /** Attach the M-Pesa number an email account will pay from. Proven when the fee arrives from it. */
 export async function setAccountPhone(account: Account, phone: string): Promise<Account> {
   const normalised = normaliseMsisdn(phone);
@@ -168,6 +212,7 @@ export function publicAccount(a: Account) {
     id: a.id,
     subject: a.subject,
     email: a.email,
+    email_verified: a.emailVerified,
     phone: a.phone,
     phone_verified: a.phoneVerified,
     role: a.role,

@@ -59,6 +59,9 @@ export const accounts = pgTable(
     // for buyers, a lower-cased email for everyone who signs in by email.
     subject: text("subject").notNull(),
     email: text("email"),
+    // An email added to a phone account is proven by a code sent to it; one
+    // given at commitment as contact detail is recorded but not proven.
+    emailVerified: boolean("email_verified").notNull().default(false),
     phone: text("phone"),
     // A phone added to an email account is proven by the fee paid from it.
     phoneVerified: boolean("phone_verified").notNull().default(false),

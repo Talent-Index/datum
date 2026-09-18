@@ -11,6 +11,30 @@ import { db, schema } from "@/lib/db";
  * the transaction that carried it.
  */
 export async function GET(request: Request): Promise<NextResponse> {
+  const address = new URL(request.url).searchParams.get("address");
+  if (address) {
+    if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return NextResponse.json({ error: "Not an address" }, { status: 400 });
+    // Public trace: what kind of thing happened, when, and the proof. The
+    // payload stays private; a receipt number or an amount is not for
+    // anyone who types in an address.
+    const rows = await db()
+      .select({
+        id: schema.activities.id,
+        kind: schema.activities.kind,
+        hash: schema.activities.payloadHash,
+        tx: schema.activities.txHash,
+        at: schema.activities.createdAt,
+      })
+      .from(schema.activities)
+      .where(eq(schema.activities.actorAddress, address))
+      .orderBy(desc(schema.activities.id))
+      .limit(200);
+    const [holder] = await db()
+      .select({ role: schema.accounts.role, kyc: schema.accounts.kycStatus, since: schema.accounts.createdAt })
+      .from(schema.accounts)
+      .where(eq(schema.accounts.address, address));
+    return NextResponse.json({ address, holder: holder ?? null, activities: rows });
+  }
   const account = await currentAccount(request);
   const all = isOperator(request) || account?.role === "trustee";
   const wantAll = new URL(request.url).searchParams.get("scope") === "all";

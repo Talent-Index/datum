@@ -5,7 +5,7 @@ import { z } from "zod";
 import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
-import { feeRequired, payerPhone } from "@/lib/accounts";
+import { ensureBuyerAccount, feeRequired, payerPhone } from "@/lib/accounts";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -17,6 +17,8 @@ import { logActivity } from "@/lib/registry";
  */
 const bodySchema = z.object({
   commitmentKes: z.number().int().positive().max(1_000_000_000),
+  name: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().email("Enter a valid email address").optional().or(z.literal("")),
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -33,8 +35,27 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.success) {
     return NextResponse.json({ error: "Send { commitmentKes }" }, { status: 400 });
   }
-  const { phone, account } = payer;
+  const { phone } = payer;
   const { commitmentKes } = parsed.data;
+
+  // A commitment is made by a person, not a number: the name and email go
+  // on an account with its own address, created here if this is their
+  // first time, so the money is traceable from the first shilling.
+  let account = payer.account;
+  if (!account && !parsed.data.name) {
+    return NextResponse.json({ error: "Tell us your name and email so the commitment is in your name" }, { status: 400 });
+  }
+  if (!account || parsed.data.name || parsed.data.email) {
+    try {
+      account = await ensureBuyerAccount(
+        account?.subject ?? phone,
+        parsed.data.name ?? account?.displayName ?? "",
+        parsed.data.email || null,
+      );
+    } catch (error) {
+      return NextResponse.json({ error: error instanceof Error ? error.message : "Could not record your details" }, { status: 400 });
+    }
+  }
 
   const project = await resolveProject(request);
   if (!project) {

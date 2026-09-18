@@ -43,6 +43,13 @@
       "when": 1789716709623,
       "tag": "0005_mute_winter_soldier",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789717673876,
+      "tag": "0006_careful_bishop",
+      "breakpoints": true
     }
   ]
 }
