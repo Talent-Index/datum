@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRef, useState } from "react";
 
+import { NavLinks } from "@/lib/ui/nav";
 import {
   call,
   kes,
@@ -12,6 +13,7 @@ import {
   useSession,
   type Verdict,
 } from "@/lib/ui/project";
+import { ActivityFeed, ReviewPanels } from "@/lib/ui/review";
 
 /**
  * The drawdown register: the same document a bank and a quantity surveyor
@@ -167,13 +169,13 @@ export default function Console() {
   const over = state ? state.status !== "Active" : true;
   const locked = !operator || over || busy !== null;
   const current = state?.milestones.find((m) => m.current);
-  const buyHref = state ? `/buy?project=${state.project}` : "/buy";
 
   return (
     <div className="wrap">
       <header className="masthead">
         <h1>Drawdown register</h1>
         <div className="meta">
+          <NavLinks current="register" project={state?.project} />
           <span>
             Project{" "}
             {projects.length > 1 ? (
@@ -209,9 +211,6 @@ export default function Console() {
             ) : (
               <b>Read-only</b>
             )}
-          </span>
-          <span>
-            <Link href={buyHref}>{state?.is_remittance ? "Sender page →" : "Buyer page →"}</Link>
           </span>
         </div>
       </header>
@@ -406,6 +405,10 @@ export default function Console() {
               </div>
             </div>
           </section>
+
+          {operator && (
+            <ReviewPanels operator selfTrusteeId={null} busy={busy} act={act} showToast={showToast} />
+          )}
 
           {operator && (
             <section className="panel">
@@ -620,6 +623,8 @@ export default function Console() {
               </table>
             </div>
           </section>
+
+          {operator && <ActivityFeed scope="all" />}
         </div>
       </div>
 

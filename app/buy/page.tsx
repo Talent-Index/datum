@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 
+import { NavLinks } from "@/lib/ui/nav";
 import { asMsisdn, call, kes, useProject, useSession } from "@/lib/ui/project";
 
 const CHECK_LABELS: Record<string, string> = {
@@ -33,7 +34,8 @@ export default function Buy() {
     : null;
   const over = state ? state.status !== "Active" : true;
   const isSender =
-    !!signedIn && !!state?.sender_phone && asMsisdn(signedIn) === asMsisdn(state.sender_phone);
+    (!!signedIn && !!state?.sender_phone && asMsisdn(signedIn) === asMsisdn(state.sender_phone)) ||
+    (!!session?.account && !!state?.trustee_account_id && session.account.id === state.trustee_account_id);
 
   const sendCode = () =>
     act("otp", async () => {
@@ -88,6 +90,7 @@ export default function Buy() {
           {state?.site ?? "this development"}
         </h1>
         <div className="meta">
+          <NavLinks current="buy" project={state?.project} />
           <span>
             {state?.is_remittance ? "Builder" : "Developer"} <b>{state?.developer_name ?? "—"}</b>
           </span>
@@ -102,9 +105,6 @@ export default function Buy() {
               </a>
             </span>
           )}
-          <span>
-            <Link href={state ? `/?project=${state.project}` : "/"}>View the drawdown register →</Link>
-          </span>
         </div>
       </header>
 
@@ -270,14 +270,14 @@ export default function Buy() {
           {state?.awaiting_sender && state.last_verdict && (
             <section className="panel decide">
               <h2>
-                <span>{isSender ? "Your approval is needed" : "Waiting for the sender"}</span>
+                <span>{isSender ? "Your approval is needed" : "Waiting for the second signature"}</span>
                 <span>{state.milestones.find((m) => m.current)?.description ?? ""}</span>
               </h2>
               <div className="body">
                 <p>
                   {isSender
                     ? "The builder says this milestone is done and the photographs passed every check. Nothing is released until you say so. Look at them and decide."
-                    : `The photographs passed every check. ${state.sender_phone ?? "The sender"} has to approve before anything is released.`}
+                    : `The photographs passed every check. ${state.sender_phone ?? "The trustee"} has to approve before anything is released.`}
                 </p>
                 {state.last_verdict.images.map((image) => (
                   <div className="img" key={image.filename}>

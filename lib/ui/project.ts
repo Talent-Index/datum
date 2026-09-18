@@ -55,6 +55,7 @@ export interface Corroboration {
 
 export interface ProjectState {
   project: string;
+  trustee_account_id: number | null;
   site: string;
   status: "Active" | "Stalled" | "Completed";
   total_deposited: number;
@@ -86,6 +87,7 @@ export interface ProjectSummary {
 
 export interface Session {
   sender: { phone: string; expiresAt: number } | null;
+  account: { id: number; role: string; display_name: string; address: string; kyc_status: string } | null;
   operator: boolean;
 }
 
