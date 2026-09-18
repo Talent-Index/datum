@@ -7,7 +7,7 @@ import { accountById, canReview, currentAccount } from "@/lib/accounts";
 import { platformWallet } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { createProject } from "@/lib/project";
-import { logActivity, setListingLiveOnChain } from "@/lib/registry";
+import { logActivity, postListingOnChain, setKycOnChain, setListingLiveOnChain } from "@/lib/registry";
 
 const bodySchema = z.object({
   id: z.string().min(3).max(40),
@@ -24,10 +24,12 @@ interface Milestone {
 }
 
 /**
- * Approving a listing does the whole thing: the escrow is deployed with the
- * listing's milestones, the owner's address as payee and the assigned
- * trustee as attester 1, the listing is marked live on chain, and buyers
- * can commit from that moment. Nothing is left for an operator to wire up.
+ * Approving a listing does the whole thing. Staff have reached out and
+ * verified the owner, so the verdict is recorded on chain if it was not
+ * already; the listing is posted to the registry, which checks that
+ * verdict; the escrow is deployed with the listing's milestones, the
+ * owner's address as payee and the assigned trustee as attester 1; the
+ * listing is marked live; and buyers can commit from that moment.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const reviewer = await currentAccount(request);
@@ -72,8 +74,26 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!trustee || trustee.role !== "trustee") {
     return NextResponse.json({ error: "Assign a trustee to hold the second signature" }, { status: 400 });
   }
-  if (owner.kycStatus !== "verified") {
-    return NextResponse.json({ error: "The owner's identity is no longer verified" }, { status: 409 });
+  if (owner.feeStatus !== "paid") {
+    return NextResponse.json({ error: "The owner has not paid the platform fee" }, { status: 409 });
+  }
+
+  // Approval is the staff's word that they verified this person. Record it
+  // against the listing's content hash, then post the listing, which the
+  // registry refuses unless that verdict is there.
+  let kycTx: string | null = null;
+  let postTx: string | null = null;
+  try {
+    if (owner.kycStatus !== "verified") {
+      kycTx = await setKycOnChain(owner.address as `0x${string}`, true, listing.contentHash as `0x${string}`, reviewerAddress);
+      await database.update(schema.accounts).set({ kycStatus: "verified" }).where(eq(schema.accounts.id, owner.id));
+    }
+    postTx = await postListingOnChain(listing.id, owner.address as `0x${string}`, listing.contentHash as `0x${string}`);
+  } catch (error) {
+    return NextResponse.json(
+      { error: `The registry refused the listing: ${error instanceof Error ? error.message : String(error)}` },
+      { status: 502 },
+    );
   }
 
   const milestones = listing.milestones as Milestone[];
@@ -111,13 +131,13 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   await database
     .update(schema.listings)
-    .set({ status: "live", projectId, trusteeAccountId: trustee.id, reviewNote: note?.trim() || null })
+    .set({ status: "live", projectId, trusteeAccountId: trustee.id, reviewNote: note?.trim() || null, txHash: postTx })
     .where(eq(schema.listings.id, id));
   await logActivity({
     accountId: reviewer?.id ?? null,
     actorAddress: reviewerAddress,
     kind: "listing.approved",
-    payload: { listing: id, owner: owner.address, trustee: trustee.address, project: projectId, liveTx },
+    payload: { listing: id, owner: owner.address, trustee: trustee.address, project: projectId, kycTx, postTx, liveTx },
   });
 
   return NextResponse.json({
