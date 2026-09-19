@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 
-import { currentAccount, publicAccount, setAccountPhone } from "@/lib/accounts";
+import { currentAccount, publicAccount, setAccountPhone, friendlyError } from "@/lib/accounts";
 
 const bodySchema = z.object({
   phone: z.string().trim().regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678"),
@@ -24,6 +24,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     const updated = await setAccountPhone(account, parsed.data.phone);
     return NextResponse.json({ ok: true, account: publicAccount(updated), message: `Number saved. The KES fee prompt will go to ${updated.phone}.` });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not save the number" }, { status: 400 });
+    return NextResponse.json({ error: friendlyError(error, "Could not save the number; try again") }, { status: 400 });
   }
 }

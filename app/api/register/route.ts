@@ -5,7 +5,7 @@ import { z } from "zod";
 import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
-import { ensureBuyerAccount, feeRequired, payerPhone } from "@/lib/accounts";
+import { ensureBuyerAccount, feeRequired, friendlyError, payerPhone } from "@/lib/accounts";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -53,7 +53,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         parsed.data.email || null,
       );
     } catch (error) {
-      return NextResponse.json({ error: error instanceof Error ? error.message : "Could not record your details" }, { status: 400 });
+      return NextResponse.json({ error: friendlyError(error, "Could not record your details; try again") }, { status: 400 });
     }
   }
 

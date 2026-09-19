@@ -36,6 +36,19 @@ export async function currentAccount(request: Request): Promise<Account | null> 
   if (!session) return null;
   const direct = await accountBySubject(session.subject);
   if (direct) return direct;
+  // An email account that added a number can sign in with that number: the
+  // session just proved the handset, which is what the fee would have
+  // proved, so the number is marked proven here too.
+  if (session.phone) {
+    const byPhone = await accountByPhone(session.phone);
+    if (byPhone) {
+      if (!byPhone.phoneVerified) {
+        const [row] = await db().update(schema.accounts).set({ phoneVerified: true }).where(eq(schema.accounts.id, byPhone.id)).returning();
+        return row ?? byPhone;
+      }
+      return byPhone;
+    }
+  }
   // A phone account that confirmed an email can sign in with it. Only a
   // proven email counts: one given as contact detail was never checked.
   if (session.email) {
@@ -43,6 +56,16 @@ export async function currentAccount(request: Request): Promise<Account | null> 
     if (byEmail?.emailVerified) return byEmail;
   }
   return null;
+}
+
+/** A database error, said in words a person can act on. */
+export function friendlyError(error: unknown, fallback: string): string {
+  const text = error instanceof Error ? error.message : String(error);
+  if (/accounts_phone|accounts_subject/.test(text)) return "That number is already on another account; sign in with it instead";
+  if (/accounts_email/.test(text)) return "That email is already on another account; sign in with it instead";
+  if (/accounts_address/.test(text)) return "An account already exists for this identity";
+  if (text.startsWith("Failed query")) return fallback;
+  return text;
 }
 
 export async function accountBySubject(subject: string): Promise<Account | null> {
@@ -162,7 +185,7 @@ export async function setAccountEmail(account: Account, email: string, verified:
  * to a person and an address from the first shilling.
  */
 export async function ensureBuyerAccount(subject: string, displayName: string, email: string | null): Promise<Account> {
-  const existing = await accountBySubject(subject);
+  const existing = (await accountBySubject(subject)) ?? (subject.includes("@") ? null : await accountByPhone(subject));
   if (existing) {
     let account = existing;
     if (displayName.trim() && displayName.trim() !== account.displayName) {

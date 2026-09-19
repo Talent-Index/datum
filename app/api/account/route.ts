@@ -3,7 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { currentSender } from "@/lib/auth";
-import { createAccount, currentAccount, ensureRegistered, publicAccount } from "@/lib/accounts";
+import { createAccount, currentAccount, ensureRegistered, publicAccount, friendlyError } from "@/lib/accounts";
 import { db, schema } from "@/lib/db";
 import { SELF_SERVICE_ROLES } from "@/lib/registry";
 
@@ -122,6 +122,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       message: `Account opened. Your Avalanche address is ${account.address}.`,
     });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not open the account" }, { status: 400 });
+    return NextResponse.json({ error: friendlyError(error, "Could not open the account; try again") }, { status: 400 });
   }
 }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { currentAccount, publicAccount, setAccountEmail } from "@/lib/accounts";
+import { currentAccount, publicAccount, setAccountEmail, friendlyError } from "@/lib/accounts";
 import { hashOtp, otpTestCodeAccepted } from "@/lib/auth";
 import { db, schema } from "@/lib/db";
 import { normaliseEmail } from "@/lib/email";
@@ -42,6 +42,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     await logActivity({ accountId: account.id, actorAddress: account.address as `0x${string}`, kind: "email.verified", payload: { emailHash: hashOtp(email, "email") } });
     return NextResponse.json({ ok: true, account: publicAccount(updated), message: `${email} is now on your account.` });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not attach the email" }, { status: 400 });
+    return NextResponse.json({ error: friendlyError(error, "Could not attach the email; try again") }, { status: 400 });
   }
 }

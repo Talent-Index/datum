@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { isOperator } from "@/lib/auth";
-import { accountByPhone, createAccount, publicAccount } from "@/lib/accounts";
+import { accountByPhone, createAccount, publicAccount, friendlyError } from "@/lib/accounts";
 import { db, schema } from "@/lib/db";
 
 /** Trustees on the platform. Anyone can see who they are. */
@@ -35,6 +35,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     const account = await createAccount({ subject: parsed.data.phone, role: "trustee", displayName: parsed.data.displayName });
     return NextResponse.json({ ok: true, trustee: publicAccount(account), message: `${account.displayName} appointed as trustee at ${account.address}.` });
   } catch (error) {
-    return NextResponse.json({ error: error instanceof Error ? error.message : "Could not appoint the trustee" }, { status: 400 });
+    return NextResponse.json({ error: friendlyError(error, "Could not appoint the trustee; try again") }, { status: 400 });
   }
 }
