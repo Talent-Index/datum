@@ -56,6 +56,7 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
   }
 
   if (payment.purpose === "fee") return creditFee(paymentId, payment, receipt);
+  if (payment.purpose === "initial_deposit") return creditInitialDeposit(paymentId, payment, receipt);
 
   if (!payment.projectId) return { status: "failed", reason: "deposit has no project" };
   const project = await getProject(payment.projectId);
@@ -152,4 +153,20 @@ async function creditFee(paymentId: number, payment: PendingPayment, receipt?: s
     payload: { kes: payment.amountKes, receipt: receipt ?? payment.mpesaReceipt, phone: normaliseMsisdn(payment.phone) },
   });
   return { status: "confirmed", txHash: logged.txHash ?? "" };
+}
+
+/**
+ * The initialisation deposit on a build request. There is no escrow yet,
+ * so the money is recorded against the request; it moves into the escrow
+ * the moment the agreement's second signature deploys it.
+ */
+async function creditInitialDeposit(paymentId: number, payment: PendingPayment, receipt?: string): Promise<CreditOutcome> {
+  if (!payment.buildRequestId) return { status: "failed", reason: "initial deposit has no build request" };
+  await db()
+    .update(schema.pendingPayments)
+    .set({ status: "confirmed", mpesaReceipt: receipt ?? payment.mpesaReceipt, completedAt: new Date() })
+    .where(eq(schema.pendingPayments.id, paymentId));
+  const { markInitialDepositPaid } = await import("./builds");
+  await markInitialDepositPaid(payment.buildRequestId, receipt ?? payment.mpesaReceipt);
+  return { status: "confirmed", txHash: "" };
 }

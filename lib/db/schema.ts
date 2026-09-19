@@ -158,6 +158,44 @@ export const listings = pgTable(
 );
 
 /**
+ * Someone who wants a house built comes to Datum first. They pay an
+ * initialisation deposit, staff propose a builder, a trustee and the
+ * milestones, both sides sign the agreement, and only then does the escrow
+ * exist and the deposit move into it.
+ */
+export const buildRequests = pgTable(
+  "build_requests",
+  {
+    id: text("id").primaryKey(),
+    ownerAccountId: integer("owner_account_id").notNull().references(() => accounts.id),
+    title: text("title").notNull(),
+    description: text("description").notNull(),
+    locationName: text("location_name").notNull(),
+    latitude: doublePrecision("latitude").notNull(),
+    longitude: doublePrecision("longitude").notNull(),
+    budgetKes: integer("budget_kes").notNull(),
+    initialDepositKes: integer("initial_deposit_kes").notNull(),
+    depositPaidAt: timestamp("deposit_paid_at", { withTimezone: true }),
+    // The agreement, once staff propose it.
+    builderAccountId: integer("builder_account_id"),
+    trusteeAccountId: integer("trustee_account_id"),
+    milestones: jsonb("milestones"),
+    priceKes: integer("price_kes"),
+    agreementHash: text("agreement_hash"),
+    ownerSignedAt: timestamp("owner_signed_at", { withTimezone: true }),
+    ownerSignTx: text("owner_sign_tx"),
+    builderSignedAt: timestamp("builder_signed_at", { withTimezone: true }),
+    builderSignTx: text("builder_sign_tx"),
+    // requested | deposit_paid | proposed | signed | active | cancelled
+    status: text("status").notNull().default("requested"),
+    projectId: text("project_id"),
+    note: text("note"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("build_requests_owner").on(table.ownerAccountId), index("build_requests_status").on(table.status)],
+);
+
+/**
  * Everything anyone did, with the hash that was written to the registry
  * and the transaction that carried it. A null transaction means the write
  * failed and the replay job will retry it.
@@ -242,10 +280,12 @@ export const pendingPayments = pgTable(
     id: serial("id").primaryKey(),
     checkoutRequestId: text("checkout_request_id").notNull(),
     merchantRequestId: text("merchant_request_id"),
-    // A deposit belongs to a project; a fee belongs to an account.
-    purpose: text("purpose").notNull().default("deposit"), // deposit | fee
+    // A deposit belongs to a project; a fee belongs to an account; an
+    // initial deposit belongs to a build request that has no escrow yet.
+    purpose: text("purpose").notNull().default("deposit"), // deposit | fee | initial_deposit
     projectId: text("project_id").references(() => projects.id),
     accountId: integer("account_id"),
+    buildRequestId: text("build_request_id"),
     phone: text("phone").notNull(),
     amountKes: integer("amount_kes").notNull(),
     status: text("status").notNull().default("pending"), // pending | confirmed | failed
