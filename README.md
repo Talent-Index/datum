@@ -244,6 +244,12 @@ Every action anyone takes is written to the registry as a hash keyed to the acto
 
 Concurrency note: the platform wallet signs every registry write. Two requests landing in the same second can race on the nonce; the loser is recorded without a transaction and replayed. A queue in front of the wallet is the production fix.
 
+## Build requests
+
+The other way a project starts. An owner, at home or abroad, asks Datum to build on their plot: what, where, and a budget. Creating the request sends an M-Pesa prompt for the initialisation deposit, ten percent of the budget by default (`BUILD_INITIAL_DEPOSIT_PERCENT`), which is recorded against the request because no escrow exists yet. Staff then assign a verified builder and a trustee, set the price and the milestones, and propose; the proposal is hashed and that hash is what both sides sign, each from their own account, each signature an activity on chain from their own address. The second signature deploys the escrow with the builder as payee and the trustee as attester 1, moves the initial deposit into it as the owner's first claim, and the build is active: the owner pays the rest in instalments, the builder submits photographs, the trustee countersigns, and each milestone releases its share.
+
+Staff can record a deposit settled outside M-Pesa with a reason, which goes on chain. Proposing again replaces the agreement and clears both signatures.
+
 ## Projects
 
 A project is a database row, not a deployment.
@@ -346,6 +352,7 @@ Holding buyers' money in escrow is regulated activity in Kenya. This is an MVP f
 - `/account` is where a person proves their email or number, opens their account, adds the number they pay from, pays the fee, posts with photographs, and waits for staff to verify them.
 - `/buy?project=<id>` is where a buyer or sender commits, pays in, and where the holder of the second signature approves a milestone.
 - `/trace/<address>` is the public record of everything done from one address: kinds, times, record hashes and transactions, with the payload kept private. Every account page links to its own.
+- `/build` is where an owner asks for a build, pays the initial deposit, and signs the agreement; builders sign there too.
 - `/register?project=<id>` is the drawdown register: evidence, countersigning, public-record checks, the buyer ledger, and the operator's review panels.
 
 ## Demo console

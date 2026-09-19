@@ -3,13 +3,14 @@
 import Link from "next/link";
 
 /** The three places on the platform, kept in the masthead of each. */
-export function NavLinks({ project, current }: { project?: string | null; current: "home" | "register" | "buy" | "listings" | "account" }) {
+export function NavLinks({ project, current }: { project?: string | null; current: "home" | "register" | "buy" | "listings" | "account" | "build" }) {
   const q = project ? `?project=${encodeURIComponent(project)}` : "";
   const items: Array<[key: typeof current, href: string, label: string]> = [
     ["home", "/", "Home"],
     ["register", `/register${q}`, "Register"],
     ["buy", `/buy${q}`, "Pay in"],
     ["listings", "/listings", "Listings"],
+    ["build", "/build", "Build"],
     ["account", "/account", "Account"],
   ];
   return (

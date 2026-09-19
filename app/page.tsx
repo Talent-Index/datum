@@ -30,11 +30,11 @@ const ROLES: Array<{
   },
   {
     role: "sender",
-    title: "Sending money home",
-    who: "Abroad, paying for a build on your own plot",
-    does: "Sign in by email, add the M-Pesa number you pay from, pay a small fee, and every shilling sits in escrow until a trustee signs for the work in the photographs.",
-    href: "/account?role=sender",
-    action: "Start sending safely",
+    title: "Build my house",
+    who: "Abroad or at home, building on your own plot",
+    does: "Tell us what to build, pay a ten percent initial deposit by M-Pesa, and Datum finds a verified builder and a trustee. You both sign; the escrow goes live with your deposit in it, and each stage is paid only when proven.",
+    href: "/build",
+    action: "Ask for a build",
   },
   {
     role: "seller",

@@ -299,3 +299,163 @@ export function ActivityFeed({ scope }: { scope: "mine" | "all" }) {
     </section>
   );
 }
+
+
+interface OpenBuild {
+  id: string;
+  title: string;
+  description: string;
+  location: string;
+  budget_kes: number;
+  initial_deposit_kes: number;
+  deposit_paid_at: string | null;
+  price_kes: number | null;
+  status: string;
+  agreement_hash: string | null;
+  owner_signed_at: string | null;
+  builder_signed_at: string | null;
+  owner: { id: number; name: string; address: string; email: string | null; phone: string | null } | null;
+  builder: { id: number; name: string } | null;
+  trustee: { id: number; name: string } | null;
+}
+
+interface Builder {
+  id: number;
+  name: string;
+  company: string | null;
+  role: string;
+}
+
+const MILESTONE_LINES = [
+  "Foundation complete | foundation | 20",
+  "Ground floor slab | ground_slab | 20",
+  "Walls to roof level | superstructure | 25",
+  "Roof on | roofing | 20",
+  "Finishes complete | finishing | 15",
+].join("\n");
+
+/** Build requests waiting on staff: a builder, a trustee, a price and the milestones. */
+export function BuildRequestsPanel({
+  operator,
+  selfTrusteeId,
+  busy,
+  act,
+  showToast,
+}: {
+  operator: boolean;
+  selfTrusteeId: number | null;
+  busy: string | null;
+  act: (name: string, fn: () => Promise<void>) => void;
+  showToast: (text: string, err?: boolean) => void;
+}) {
+  const [builds, setBuilds] = useState<OpenBuild[]>([]);
+  const [builders, setBuilders] = useState<Builder[]>([]);
+  const [trustees, setTrustees] = useState<Trustee[]>([]);
+  const [draft, setDraft] = useState<Record<string, { builder: number; trustee: number; price: string; milestones: string }>>({});
+
+  const load = useCallback(async () => {
+    const [b, d, t] = await Promise.all([
+      get<{ builds: OpenBuild[] }>("/api/builds?scope=open"),
+      get<{ builders: Builder[] }>("/api/builders"),
+      get<{ trustees: Trustee[] }>("/api/trustees"),
+    ]);
+    setBuilds(b?.builds ?? []);
+    setBuilders(d?.builders ?? []);
+    setTrustees(t?.trustees ?? []);
+  }, []);
+  useEffect(() => {
+    void load();
+    const id = setInterval(() => void load(), 8000);
+    return () => clearInterval(id);
+  }, [load]);
+
+  const d = (b: OpenBuild) =>
+    draft[b.id] ?? { builder: builders[0]?.id ?? 0, trustee: selfTrusteeId ?? trustees[0]?.id ?? 0, price: String(b.price_kes ?? b.budget_kes), milestones: MILESTONE_LINES };
+  const setD = (id: string, patch: Partial<{ builder: number; trustee: number; price: string; milestones: string }>) =>
+    setDraft((v) => ({ ...v, [id]: { ...(v[id] ?? d(builds.find((x) => x.id === id)!)), ...patch } }));
+
+  const settle = (id: string) =>
+    act(`settle${id}`, async () => {
+      const r = await call("/api/builds/deposit/settle", { id, reason: "Deposit received outside M-Pesa, confirmed by staff" });
+      showToast(String(r.message));
+      await load();
+    });
+
+  const propose = (b: OpenBuild) =>
+    act(`prop${b.id}`, async () => {
+      const cur = d(b);
+      const milestones = cur.milestones.split("\n").map((l) => l.trim()).filter(Boolean).map((line) => {
+        const [description = "", stage = "", percent = ""] = line.split("|").map((s) => s.trim());
+        return { description, stage, percent: Number.parseInt(percent, 10) };
+      });
+      const r = await call("/api/builds/propose", { id: b.id, builderAccountId: cur.builder, trusteeAccountId: cur.trustee, priceKes: Number.parseInt(cur.price, 10), milestones });
+      showToast(String(r.message));
+      await load();
+    });
+
+  return (
+    <section className="panel">
+      <h2>
+        <span>Build requests</span>
+        <span>{builds.length} open</span>
+      </h2>
+      <div className="body">
+        <p>Owners who asked Datum to build. Once the deposit is in, assign a verified builder and a trustee, set the price and milestones, and propose. Both sides sign from their own accounts; the second signature deploys the escrow.</p>
+        {builds.length === 0 && <p className="empty">No open requests.</p>}
+        {builds.map((b) => (
+          <div className="review" key={b.id}>
+            <div className="review-head">
+              <b>{b.title}</b>
+              <span className="pill">{b.status.replace("_", " ")}</span>
+            </div>
+            <div className="review-meta">
+              {b.location} · budget {kes(b.budget_kes)} · deposit {kes(b.initial_deposit_kes)} {b.deposit_paid_at ? "received" : "waiting"}
+            </div>
+            <div className="review-meta">
+              Owner {b.owner?.name} · {b.owner?.email ?? "no email"} · {b.owner?.phone ?? "no number"} · {b.owner && <AddressLink address={b.owner.address} />}
+            </div>
+            <p style={{ fontSize: 13 }}>{b.description}</p>
+            {!b.deposit_paid_at && operator && (
+              <div className="btns" style={{ marginBottom: 10 }}>
+                <button className="ghost" onClick={() => settle(b.id)} disabled={busy !== null}>Record deposit as settled</button>
+              </div>
+            )}
+            {b.deposit_paid_at && b.status !== "signed" && b.status !== "active" && (
+              <>
+                {b.status === "proposed" && (
+                  <p className="hint" style={{ marginBottom: 8 }}>
+                    Proposed to {b.builder?.name} with {b.trustee?.name} as trustee. Owner {b.owner_signed_at ? "signed" : "not yet"}, builder {b.builder_signed_at ? "signed" : "not yet"}. Proposing again replaces it and clears signatures.
+                  </p>
+                )}
+                <div className="row">
+                  <div>
+                    <label htmlFor={`bb-${b.id}`}>Builder (verified)</label>
+                    <select id={`bb-${b.id}`} value={d(b).builder} onChange={(e) => setD(b.id, { builder: Number(e.target.value) })}>
+                      {builders.map((x) => <option key={x.id} value={x.id}>{x.company ?? x.name} ({x.role})</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor={`bt-${b.id}`}>Trustee</label>
+                    <select id={`bt-${b.id}`} value={d(b).trustee} onChange={(e) => setD(b.id, { trustee: Number(e.target.value) })}>
+                      {trustees.map((t) => <option key={t.id} value={t.id}>{t.display_name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <label htmlFor={`bp-${b.id}`}>Agreed price (KES)</label>
+                <input id={`bp-${b.id}`} type="number" value={d(b).price} onChange={(e) => setD(b.id, { price: e.target.value })} />
+                <label htmlFor={`bm-${b.id}`}>Milestones, one per line: description | stage | percent</label>
+                <textarea id={`bm-${b.id}`} rows={5} value={d(b).milestones} onChange={(e) => setD(b.id, { milestones: e.target.value })} />
+                <div className="btns">
+                  <button onClick={() => propose(b)} disabled={busy !== null || builders.length === 0 || trustees.length === 0}>
+                    {busy === `prop${b.id}` ? "Proposing…" : b.status === "proposed" ? "Propose again" : "Propose the agreement"}
+                  </button>
+                </div>
+                {builders.length === 0 && <p className="hint">No verified builders yet. Verify a developer or company first.</p>}
+              </>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}

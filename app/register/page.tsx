@@ -13,7 +13,7 @@ import {
   useSession,
   type Verdict,
 } from "@/lib/ui/project";
-import { ActivityFeed, ReviewPanels } from "@/lib/ui/review";
+import { ActivityFeed, BuildRequestsPanel, ReviewPanels } from "@/lib/ui/review";
 
 /**
  * The drawdown register: the same document a bank and a quantity surveyor
@@ -407,7 +407,10 @@ export default function Console() {
           </section>
 
           {operator && (
-            <ReviewPanels operator selfTrusteeId={null} busy={busy} act={act} showToast={showToast} />
+            <>
+              <BuildRequestsPanel operator selfTrusteeId={null} busy={busy} act={act} showToast={showToast} />
+              <ReviewPanels operator selfTrusteeId={null} busy={busy} act={act} showToast={showToast} />
+            </>
           )}
 
           {operator && (

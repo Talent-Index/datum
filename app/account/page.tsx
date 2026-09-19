@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AddressLink, NavLinks, TxLink } from "@/lib/ui/nav";
 import { call, kes, useProject } from "@/lib/ui/project";
-import { ActivityFeed, ReviewPanels } from "@/lib/ui/review";
+import { ActivityFeed, BuildRequestsPanel, ReviewPanels } from "@/lib/ui/review";
 
 /**
  * One page for whoever you are here. Prove an email or a number, open the
@@ -435,6 +435,7 @@ export default function AccountPage() {
                     ) : <p className="empty">None yet. Approve a listing and you hold its second signature.</p>}
                   </div>
                 </section>
+                <BuildRequestsPanel operator={false} selfTrusteeId={account.id} busy={busy} act={act} showToast={showToast} />
                 <ReviewPanels operator={false} selfTrusteeId={account.id} busy={busy} act={act} showToast={showToast} />
               </>
             )}
@@ -459,6 +460,20 @@ export default function AccountPage() {
                   {view!.listings.some((l) => l.status === "pending_review") && (
                     <p className="hint">Datum staff will contact you at {account.email ?? account.phone} to verify before anything goes live.</p>
                   )}
+                </div>
+              </section>
+            )}
+
+            {["buyer", "sender", "developer", "company"].includes(account.role) && (
+              <section className="panel">
+                <h2><span>{account.role === "developer" || account.role === "company" ? "Builds assigned to you" : "Build my house"}</span></h2>
+                <div className="body">
+                  <p>
+                    {account.role === "developer" || account.role === "company"
+                      ? "When Datum assigns you to an owner's build, the agreement appears on the build page for you to sign. The second signature deploys the escrow."
+                      : "Ask Datum to build on your plot: a ten percent deposit, a verified builder, a trustee, and an agreement you both sign before any escrow exists."}
+                  </p>
+                  <Link className="btn ghost" href="/build">Open the build page</Link>
                 </div>
               </section>
             )}
