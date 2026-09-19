@@ -98,7 +98,7 @@ export function accountAddress(subject: string): Address {
 export async function payerPhone(request: Request): Promise<{ phone: string; account: Account | null } | null> {
   const session = currentSender(request);
   if (!session) return null;
-  const account = await accountBySubject(session.subject);
+  const account = await currentAccount(request);
   const phone = session.phone ?? account?.phone ?? null;
   return phone ? { phone, account } : null;
 }
