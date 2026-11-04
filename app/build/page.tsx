@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
-import { NavLinks, TxLink } from "@/lib/ui/nav";
+import { AppFooter, AppHeader } from "@/lib/ui/chrome";
+import { shortHex } from "@/lib/ui/format";
 import { call, kes, useProject, useSession } from "@/lib/ui/project";
+import { useRecord } from "@/lib/ui/record";
 
 /**
  * Build my house: the owner's path. Ask, pay the initial deposit, wait
@@ -45,6 +47,7 @@ const STEP_LABEL: Record<string, string> = {
 export default function BuildPage() {
   const { toast, busy, showToast, act } = useProject();
   const { session } = useSession();
+  const { open } = useRecord();
   const [builds, setBuilds] = useState<Build[] | null>(null);
   const [form, setForm] = useState({ id: "", title: "", description: "", locationName: "", latitude: "-1.2921", longitude: "36.7827", budgetKes: "" });
 
@@ -77,20 +80,16 @@ export default function BuildPage() {
   const sign = (id: string) => act(`sign${id}`, async () => { const r = await call("/api/builds/sign", { id }); showToast(String(r.message)); await load(); });
 
   return (
-    <div className="wrap">
-      <header className="masthead">
-        <h1>Build my house, with the money held until the walls go up.</h1>
-        <div className="meta">
-          <NavLinks current="build" />
-          {account && <span>Signed in as <b>{account.display_name}</b></span>}
-        </div>
-      </header>
-
-      <section className="explainer">
-        <p className="lede">
-          Tell us what you want built and where. Pay a ten percent initial deposit by M-Pesa. Datum finds a verified builder and a trustee and proposes the milestones. You and the builder sign; the moment both signatures are in, the escrow exists with your deposit inside it and building starts. Each stage is paid only when photographs prove it and the trustee signs.
+    <>
+      <AppHeader current="build" />
+      <main id="main" className="wrap">
+      <div className="page-intro">
+        <h1>Build my house, with the money held until the work is proven.</h1>
+        <p>
+          Tell us what you want built and where. Pay a ten percent initial deposit by M-Pesa. Datum finds a verified builder and a trustee and proposes the milestones. You and the builder sign; the escrow then holds the deposit, and each stage is paid when the photographs pass and two of three attesters sign.
+          {account ? <> Signed in as {account.display_name}.</> : null}
         </p>
-      </section>
+      </div>
 
       {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.text}</div>}
 
@@ -171,8 +170,8 @@ export default function BuildPage() {
                       {b.builder && <tr><td>Builder</td><td className="n">{b.builder.name}</td></tr>}
                       {b.trustee && <tr><td>Trustee</td><td className="n">{b.trustee.name}</td></tr>}
                       {b.price_kes && <tr><td>Agreed price</td><td className="n">{kes(b.price_kes)}</td></tr>}
-                      {b.agreement_hash && <tr><td>Owner signature</td><td className="n">{b.owner_signed_at ? <TxLink hash={b.owner_sign_tx} label="signed" /> : "—"}</td></tr>}
-                      {b.agreement_hash && <tr><td>Builder signature</td><td className="n">{b.builder_signed_at ? <TxLink hash={b.builder_sign_tx} label="signed" /> : "—"}</td></tr>}
+                      {b.agreement_hash && <tr><td>Owner signature</td><td className="n">{b.owner_signed_at ? "Signed" : "—"}</td></tr>}
+                      {b.agreement_hash && <tr><td>Builder signature</td><td className="n">{b.builder_signed_at ? "Signed" : "—"}</td></tr>}
                     </tbody>
                   </table>
                   {b.milestones && (
@@ -180,7 +179,20 @@ export default function BuildPage() {
                       {b.milestones.map((m, i) => <li key={i}>{m.description} <span>{m.percent}%</span></li>)}
                     </ul>
                   )}
-                  {b.agreement_hash && <div className="evhash">Agreement hash {b.agreement_hash}</div>}
+                  {b.agreement_hash && (
+                    <button type="button" className="linkish" onClick={() => open({
+                      title: "Agreement record",
+                      entry: `Agreement ${shortHex(b.agreement_hash, 8, 4)}`,
+                      sealed: true,
+                      summary: "The agreement both sides sign is hashed. The signatures are transactions on Avalanche Fuji.",
+                      events: [
+                        { tone: b.owner_signed_at ? "ok" : "wait", title: "Owner", when: b.owner_signed_at ? "Signed" : "Waiting" },
+                        { tone: b.builder_signed_at ? "ok" : "wait", title: "Builder", when: b.builder_signed_at ? "Signed" : "Waiting" },
+                      ],
+                      rows: [{ label: "Agreement fingerprint", value: shortHex(b.agreement_hash, 10, 6) }, { label: "Ledger", value: "Avalanche Fuji" }],
+                      explorerHref: b.owner_sign_tx ? `https://testnet.snowtrace.io/tx/${b.owner_sign_tx}` : b.builder_sign_tx ? `https://testnet.snowtrace.io/tx/${b.builder_sign_tx}` : null,
+                    })}>Record details</button>
+                  )}
                   <div className="btns" style={{ marginTop: 12 }}>
                     {iAmOwner && !b.deposit_paid_at && <button onClick={() => resend(b.id)} disabled={busy !== null}>Send the deposit prompt again</button>}
                     {(iAmOwner || iAmBuilder) && (b.status === "proposed" || b.status === "signed") && !mySignature && (
@@ -205,10 +217,8 @@ export default function BuildPage() {
         </div>
       </div>
 
-      <footer>
-        <span>Your deposit is held by escrow, not by the builder</span>
-        <span><Link href="/account">Your account</Link></span>
-      </footer>
-    </div>
+      </main>
+      <AppFooter />
+    </>
   );
 }

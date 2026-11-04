@@ -73,6 +73,8 @@ export const escrowAbi = [
   { type: "function", name: "heldBalance", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "nextMilestone", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "status", stateMutability: "view", inputs: [], outputs: [{ type: "uint8" }] },
+  { type: "function", name: "lastProgressAt", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
+  { type: "function", name: "stallAfter", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   { type: "function", name: "milestoneCount", stateMutability: "view", inputs: [], outputs: [{ type: "uint256" }] },
   {
     type: "function",

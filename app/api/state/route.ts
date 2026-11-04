@@ -17,7 +17,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const chain = publicClient();
   const escrow = { address: project.contractAddress, abi: escrowAbi } as const;
 
-  const [totalDeposited, totalReleased, held, nextMilestone, statusCode, developerBalance] =
+  const [totalDeposited, totalReleased, held, nextMilestone, statusCode, developerBalance, lastProgressAt, stallAfter] =
     await Promise.all([
       chain.readContract({ ...escrow, functionName: "totalDeposited" }),
       chain.readContract({ ...escrow, functionName: "totalReleased" }),
@@ -30,6 +30,8 @@ export async function GET(request: Request): Promise<NextResponse> {
         functionName: "balanceOf",
         args: [project.developerAddress],
       }),
+      chain.readContract({ ...escrow, functionName: "lastProgressAt" }),
+      chain.readContract({ ...escrow, functionName: "stallAfter" }),
     ]);
   const status = (["Active", "Stalled", "Completed"] as const)[Number(statusCode)] ?? "Active";
   const next = Number(nextMilestone);
@@ -136,5 +138,8 @@ export async function GET(request: Request): Promise<NextResponse> {
       milestones[next]?.approvals === 1 &&
       !milestones[next]?.signers.includes("Sender"),
     contract: project.contractAddress,
+    // Read-only context for the register. Existing fields are unchanged.
+    last_progress_at: new Date(Number(lastProgressAt) * 1000).toISOString(),
+    stall_after_seconds: Number(stallAfter),
   });
 }
