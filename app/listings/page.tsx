@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { AddressLink, NavLinks, TxLink } from "@/lib/ui/nav";
+import { AppFooter, AppHeader } from "@/lib/ui/chrome";
 import { kes } from "@/lib/ui/project";
+import { RecordAddress, RecordTx } from "@/lib/ui/record";
 
 interface Listing {
   id: string;
@@ -40,21 +41,13 @@ export default function Listings() {
   }, []);
 
   return (
-    <div className="wrap">
-      <header className="masthead">
+    <>
+      <AppHeader current="listings" />
+      <main id="main" className="wrap">
+      <div className="page-intro">
         <h1>Homes and plots with the money held in escrow</h1>
-        <div className="meta">
-          <NavLinks current="listings" />
-          <span>Every owner here is identity-verified and every listing has a trustee.</span>
-        </div>
-      </header>
-
-      <section className="explainer">
-        <p className="lede">
-          Commit to one, pay in instalments from your M-Pesa number, and nothing reaches the seller
-          or builder until a trustee has signed for proven progress.
-        </p>
-      </section>
+        <p>Commit to one and pay in instalments from your M-Pesa number. A stage is paid when its photographs pass and two of three attesters sign.</p>
+      </div>
 
       {rows === null && <p className="empty">Loading…</p>}
       {rows && rows.length === 0 && (
@@ -79,7 +72,7 @@ export default function Listings() {
               <div className="price">{kes(l.price_kes)}</div>
               <p>{l.description}</p>
               <div className="review-meta">
-                {l.location} · {l.owner_company ?? l.owner}, verified · <AddressLink address={l.owner_address} /> · <TxLink hash={l.tx} label="on chain" />
+                {l.location} · {l.owner_company ?? l.owner}, verified · <RecordAddress address={l.owner_address} /> · <RecordTx hash={l.tx} label="Listing record" />
               </div>
               <ul className="ms">
                 {l.milestones.map((m, i) => (
@@ -99,10 +92,8 @@ export default function Listings() {
         ))}
       </div>
 
-      <footer>
-        <span>Deposits are held in escrow, never by the seller</span>
-        <span><Link href="/account">Your account</Link></span>
-      </footer>
-    </div>
+      </main>
+      <AppFooter />
+    </>
   );
 }

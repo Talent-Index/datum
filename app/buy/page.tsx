@@ -1,44 +1,58 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import { NavLinks } from "@/lib/ui/nav";
-import { asMsisdn, call, kes, useProject, useSession } from "@/lib/ui/project";
+import { IconCheck, IconChevron, Logo } from "@/lib/ui/chrome";
+import { compactKes, firstName, initials, kes, maskPhone, nextReleaseKes, previousCumulative, scheduledShare, shortHex } from "@/lib/ui/format";
+import { EXPLORER } from "@/lib/ui/nav";
+import { useRecord, type RecordDetail } from "@/lib/ui/record";
+import { asMsisdn, call, switchProject, useProject, useProjects, useSession, type Milestone, type ProjectState, type VerdictImage } from "@/lib/ui/project";
 
-const CHECK_LABELS: Record<string, string> = {
-  location: "at your plot",
-  recency: "recent",
-  novelty: "not sent before",
-  stage: "stage matches",
-};
+const CHECKS: Array<{ key: string; title: string; pass: string }> = [
+  { key: "location", title: "Taken at the plot", pass: "Inside the geofence of the registered pin" },
+  { key: "recency", title: "Taken recently", pass: "Inside the reporting window" },
+  { key: "novelty", title: "Not sent before", pass: "No match with an earlier photo on this build" },
+  { key: "stage", title: "Shows the claimed stage", pass: "The check matched the stage being claimed" },
+];
+
+const PRESETS = [50_000, 100_000, 250_000];
+
+type Tab = "home" | "pay" | "evidence";
 
 /**
- * The buyer's page. Written for someone putting money into a house that does
- * not exist yet, so it carries only what they act on: proving their number,
- * a commitment, instalments against it, and on a remittance build the
- * approval of each milestone. None of the operator's controls live here.
+ * The buyer's and sender's page: prove a number, commit, pay by M-Pesa,
+ * and approve a milestone. Wallet addresses and transaction hashes stay in
+ * the record drawer.
  */
 export default function Buy() {
   const { state, loadError, toast, busy, showToast, act } = useProject();
   const { session, refreshSession } = useSession();
+  const projects = useProjects();
+  const { open } = useRecord();
+  const [tab, setTab] = useState<Tab>("home");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
-  const [commitment, setCommitment] = useState("2000000");
+  const [commitment, setCommitment] = useState("");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [prefilled, setPrefilled] = useState(false);
+  const [amount, setAmount] = useState(50_000);
+  const [custom, setCustom] = useState(false);
+  const [prompt, setPrompt] = useState<{ amount: number; at: string; baseline: number } | null>(null);
+  const [reason, setReason] = useState("");
+  const [showReason, setShowReason] = useState(false);
+  const [shot, setShot] = useState(0);
+
   useEffect(() => {
     if (prefilled || !session?.account) return;
     setName(session.account.display_name);
     setEmail(session.account.email ?? "");
     setPrefilled(true);
   }, [session, prefilled]);
-  const [amount, setAmount] = useState("50000");
 
   const signedIn = session?.sender ? (session.sender.phone ?? session.account?.phone ?? null) : null;
-  const signedInAs = session?.sender ? (session.account?.email ?? signedIn) : null;
   const me = session?.sender
     ? (state?.buyers.find(
         (b) =>
@@ -52,6 +66,11 @@ export default function Buy() {
   const isSender =
     (!!signedIn && !!state?.sender_phone && asMsisdn(signedIn) === asMsisdn(state.sender_phone)) ||
     (!!session?.account && !!state?.trustee_account_id && session.account.id === state.trustee_account_id);
+
+  useEffect(() => {
+    if (!prompt || !me) return;
+    if (me.contributed > prompt.baseline) setPrompt(null);
+  }, [me, prompt]);
 
   const sendCode = () =>
     act("otp", async () => {
@@ -87,377 +106,606 @@ export default function Buy() {
 
   const payInstalment = () =>
     act("deposit", async () => {
-      const result = await call("/api/deposit", { kes: Number.parseInt(amount, 10) });
+      const result = await call("/api/deposit", { kes: amount });
+      setPrompt({ amount, at: new Date().toISOString(), baseline: me?.contributed ?? 0 });
       showToast(String(result.sms ?? "Check your phone for the M-Pesa prompt."));
     });
 
   const decide = (decision: "approve" | "decline") =>
     act(decision, async () => {
-      const result = await call("/api/approve", { decision });
+      const result = await call("/api/approve", { decision, reason: reason.trim() || undefined });
       showToast(result.message as string, decision === "decline");
+      if (decision === "approve") setTab("home");
     });
 
-  const remaining = me?.commitment ? Math.max(0, me.commitment - me.contributed) : 0;
-  const pct = me?.commitment ? Math.min(100, (me.contributed / me.commitment) * 100) : 0;
+  const displayName = session?.account?.display_name ?? "";
+  const greet = firstName(displayName);
+  const current = state?.milestones.find((m) => m.current) ?? null;
+  const paidCount = state?.milestones.filter((m) => m.released).length ?? 0;
+  const release = state ? nextReleaseKes(state) : 0;
+  const protectedKes = me?.still_held ?? state?.held ?? 0;
+  const releasedKes = me?.released ?? state?.total_released ?? 0;
+  const images = state?.last_verdict?.images ?? [];
+  const activeShot = images[shot] ?? images[0] ?? null;
+
+  const openRecord = () => {
+    if (!state) return;
+    open(recordFor(state, current, me?.address ?? session?.account?.address ?? null));
+  };
 
   return (
-    <div className="wrap">
-      <header className="masthead">
-        <h1>
-          {state?.is_remittance ? "Fund your build at" : "Buy into"}{" "}
-          {state?.site ?? "this development"}
-        </h1>
-        <div className="meta">
-          <NavLinks current="buy" project={state?.project} />
-          <span>
-            {state?.is_remittance ? "Builder" : "Developer"} <b>{state?.developer_name ?? "—"}</b>
-          </span>
-          <span>
-            Status <b>{state?.status ?? "—"}</b>
-          </span>
-          {signedInAs && (
-            <span>
-              Signed in as <b>{signedInAs}</b>{" "}
-              <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>
-                sign out
-              </a>
-            </span>
-          )}
+    <div className="sender">
+      <header className="sender-top">
+        <Logo />
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <button
+            type="button"
+            className="iconbtn"
+            aria-label={state?.awaiting_sender ? "A stage is waiting for you" : "No stage is waiting"}
+            onClick={() => state?.awaiting_sender && setTab("evidence")}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+              <path d="M6 8a6 6 0 0112 0c0 7 3 9 3 9H3s3-2 3-9M10 21h4" />
+            </svg>
+          </button>
+          <Link href="/account" className="avatar" aria-label={session?.sender ? "Your account" : "Sign in"}>
+            {session?.sender ? initials(displayName || signedIn || "") : "?"}
+          </Link>
         </div>
       </header>
 
-      <section className="explainer">
-        <p className="lede">
-          Your money is not paid to the {state?.is_remittance ? "builder" : "developer"}. It is
-          held in escrow and released only when construction has been photographed, checked, and
-          signed off by two independent parties. If the site goes quiet for 30 days, whatever has
-          not been released comes back to you.
-        </p>
-      </section>
+      <main id="main">
+        {toast && <div className={`toast ${toast.err ? "err" : ""}`} style={{ margin: "8px 16px" }} role="status">{toast.text}</div>}
+        {loadError && <div className="toast err" style={{ margin: "8px 16px" }}>{loadError}</div>}
 
-      {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.text}</div>}
-      {loadError && <div className="toast err">{loadError}</div>}
-
-      <div className="cols">
-        <div>
-          {session?.sender && (needsNumber || feeDue) && (
-            <section className="panel decide">
-              <h2><span>{needsNumber ? "Add the number you pay from" : "Platform fee due"}</span></h2>
-              <div className="body">
-                <p>{needsNumber ? "Instalments are M-Pesa prompts, so your account needs the number they go to." : "Pay the one-off platform fee on your account page before committing."}</p>
-                <Link className="btn" href="/account">Go to your account</Link>
-              </div>
-            </section>
-          )}
-
-          {!session?.sender && (
-            <section className="panel">
-              <h2>
-                <span>Prove your number</span>
-                <span>One-time code by SMS</span>
-              </h2>
-              <div className="body">
-                <p>
-                  Everything here is tied to the M-Pesa number you pay from. We send a six-digit
-                  code to it; nothing else is asked of you. No wallet, no password, no seed phrase.
-                </p>
-                <div className="row">
-                  <div>
-                    <label htmlFor="phone">M-Pesa number</label>
-                    <input
-                      id="phone"
-                      placeholder="07XX XXX XXX"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
-                      disabled={codeSent}
-                    />
-                  </div>
-                  {codeSent && (
-                    <div>
-                      <label htmlFor="code">Code from SMS</label>
-                      <input
-                        id="code"
-                        inputMode="numeric"
-                        placeholder="123456"
-                        value={code}
-                        onChange={(e) => setCode(e.target.value)}
-                      />
-                    </div>
-                  )}
-                </div>
-                <div className="btns">
-                  {codeSent ? (
-                    <>
-                      <button onClick={verifyCode} disabled={busy !== null || code.length !== 6}>
-                        {busy === "verify" ? "Checking…" : "Verify"}
-                      </button>
-                      <button className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>
-                        Change number
-                      </button>
-                    </>
-                  ) : (
-                    <button onClick={sendCode} disabled={busy !== null || !phone.trim()}>
-                      {busy === "otp" ? "Sending…" : "Send me a code"}
-                    </button>
-                  )}
-                </div>
-                <p className="hint">Codes expire after five minutes. Ask for another after a minute.</p>
-              </div>
-            </section>
-          )}
-
-          {signedIn && !feeDue && (
-            <section className="panel">
-              <h2>
-                <span>Your commitment</span>
-                <span>{me?.commitment ? kes(me.commitment) : "No money moves yet"}</span>
-              </h2>
-              <div className="body">
-                <p>
-                  Tell us who you are and what you intend to put in altogether. The escrow account
-                  is managed for you, every action is written against your own address, and any
-                  refund goes back to {signedIn}.
-                </p>
-                <div className="row">
-                  <div>
-                    <label htmlFor="cname">Your name</label>
-                    <input id="cname" value={name} onChange={(e) => setName(e.target.value)} />
-                  </div>
-                  <div>
-                    <label htmlFor="cemail">Email</label>
-                    <input id="cemail" type="email" placeholder="you@example.com" value={email} onChange={(e) => setEmail(e.target.value)} />
-                  </div>
-                </div>
-                <label htmlFor="commitment">Committing (KES)</label>
-                <input
-                  id="commitment"
-                  type="number"
-                  step={100000}
-                  value={commitment}
-                  onChange={(e) => setCommitment(e.target.value)}
-                />
-                <button onClick={register} disabled={over || busy !== null || name.trim().length < 2 || !email.trim()}>
-                  {busy === "register"
-                    ? "Registering…"
-                    : me?.commitment
-                      ? "Update my commitment"
-                      : "Register my commitment"}
-                </button>
-                {!me && (
-                  <p className="hint">Once registered, your instalment panel appears below.</p>
-                )}
-              </div>
-            </section>
-          )}
-
-          {me && (
-            <section className="panel">
-              <h2>
-                <span>Pay an instalment</span>
-                <span>{me.phone}</span>
-              </h2>
-              <div className="body">
-                <p>
-                  Pay as much or as little at a time as you like. Each instalment is an M-Pesa
-                  prompt to the number above.
-                </p>
-
-                <div className="target">
-                  <div className="target-head">
-                    <span>Paid toward your commitment</span>
-                    <b>
-                      {kes(me.contributed)} of {kes(me.commitment ?? 0)}
-                    </b>
-                  </div>
-                  <div className="bar">
-                    <div className="fill" style={{ width: `${pct}%` }} />
-                  </div>
-                  <div className="target-foot">
-                    {remaining === 0 && me.commitment ? (
-                      <span className="done">Commitment met in full</span>
-                    ) : (
-                      <span>{kes(remaining)} still to pay</span>
-                    )}
-                    <span>
-                      {kes(me.still_held)} protected · {kes(me.released)} released against verified
-                      work
-                    </span>
-                  </div>
-                </div>
-
-                <label htmlFor="amount">Instalment (KES)</label>
-                <input
-                  id="amount"
-                  type="number"
-                  step={10000}
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
-                />
-                <button onClick={payInstalment} disabled={over || busy !== null}>
-                  {busy === "deposit" ? "Sending prompt…" : "Send M-Pesa prompt"}
-                </button>
-                <p className="hint">
-                  Approve the prompt on your handset. This page updates on its own once Safaricom
-                  confirms.
-                </p>
-              </div>
-            </section>
-          )}
-        </div>
-
-        <div>
-          {state?.awaiting_sender && state.last_verdict && (
-            <section className="panel decide">
-              <h2>
-                <span>{isSender ? "Your approval is needed" : "Waiting for the second signature"}</span>
-                <span>{state.milestones.find((m) => m.current)?.description ?? ""}</span>
-              </h2>
-              <div className="body">
-                <p>
-                  {isSender
-                    ? "The builder says this milestone is done and the photographs passed every check. Nothing is released until you say so. Look at them and decide."
-                    : `The photographs passed every check. ${state.sender_phone ?? "The trustee"} has to approve before anything is released.`}
-                </p>
-                {state.last_verdict.images.map((image) => (
-                  <div className="img" key={image.filename}>
-                    {image.thumbnail ? (
-                      /* eslint-disable-next-line @next/next/no-img-element */
-                      <img className="shot" src={image.thumbnail} alt={image.filename} />
-                    ) : null}
-                    <div className="imgbody">
-                      <div className="checks">
-                        {Object.entries(CHECK_LABELS).map(([key, label]) => (
-                          <span key={key} className={`chk ${image.checks[key] ? "y" : "n"}`}>
-                            {label}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="note">{image.notes.join(" · ")}</div>
-                    </div>
-                  </div>
-                ))}
-                {isSender && (
-                  <>
-                    <div className="btns">
-                      <button onClick={() => decide("approve")} disabled={busy !== null}>
-                        {busy === "approve" ? "Releasing…" : "Approve and release"}
-                      </button>
-                      <button
-                        className="danger"
-                        onClick={() => decide("decline")}
-                        disabled={busy !== null}
-                      >
-                        Not satisfied
-                      </button>
-                    </div>
-                    <p className="hint">
-                      Approving releases only this milestone&apos;s share. The rest of your money
-                      stays in escrow until the next stage is proven.
-                    </p>
-                  </>
-                )}
-              </div>
-            </section>
-          )}
-
-          <section className="panel">
-            <h2>
-              <span>Where your money is</span>
-              <span>{me ? me.address.slice(0, 10) + "…" : "—"}</span>
-            </h2>
-            <div className="body">
-              {me ? (
-                <table>
-                  <tbody>
-                    <tr>
-                      <td>Paid in</td>
-                      <td className="n">{kes(me.contributed)}</td>
-                    </tr>
-                    <tr>
-                      <td>Still protected in escrow</td>
-                      <td className="n held-c">{kes(me.still_held)}</td>
-                    </tr>
-                    <tr>
-                      <td>Released against verified work</td>
-                      <td className="n rel-c">{kes(me.released)}</td>
-                    </tr>
-                  </tbody>
-                </table>
+        {!session?.sender && (
+          <section className="box" style={{ marginTop: 12 }}>
+            <div className="bh"><h2>Prove your number</h2><span className="eyebrow">SMS code</span></div>
+            <p>Everything here is tied to the M-Pesa number you pay from. We send a six-digit code. No wallet, no password.</p>
+            <label htmlFor="phone">M-Pesa number</label>
+            <input id="phone" inputMode="tel" autoComplete="tel" placeholder="07XX XXX XXX" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
+            {codeSent && (
+              <>
+                <label htmlFor="code">Code from SMS</label>
+                <input id="code" inputMode="numeric" autoComplete="one-time-code" aria-label="One-time code" value={code} onChange={(e) => setCode(e.target.value)} />
+              </>
+            )}
+            <div className="btns">
+              {codeSent ? (
+                <>
+                  <button type="button" onClick={verifyCode} disabled={busy !== null || code.length !== 6}>{busy === "verify" ? "Checking…" : "Verify"}</button>
+                  <button type="button" className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>Change number</button>
+                </>
               ) : (
-                <p className="empty">
-                  {session?.sender ? "Register above to see your position." : "Verify your number to see your position."}
-                </p>
+                <button type="button" onClick={sendCode} disabled={busy !== null || !phone.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
               )}
             </div>
+            <p className="hint">Codes expire after five minutes. Ask for another after a minute.</p>
           </section>
+        )}
 
-          <section className="panel">
-            <h2>
-              <span>Construction progress</span>
-              <span>
-                {state?.next_milestone ?? 0} of {state?.milestones.length ?? 5} verified
-              </span>
-            </h2>
-            <div className="body">
-              <p>
-                Money is released one milestone at a time, and only after photographs of the site
-                pass four checks and two of three independent parties sign.
-              </p>
-              <table>
-                <tbody>
-                  {(state?.milestones ?? []).map((m) => (
-                    <tr key={m.id}>
-                      <td>{m.description}</td>
-                      <td className="n">
-                        {m.released ? (
-                          <span className="sig">released {m.percent}%</span>
-                        ) : m.current ? (
-                          <span className="held-c">in progress</span>
-                        ) : (
-                          <span className="empty">pending</span>
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+        {session?.sender && tab === "home" && (
+          <>
+            <div className="hello">
+              <div className="greet">{greet ? `Habari, ${greet}` : "Habari"}</div>
+              <h1>{state?.site ?? "Your build"}</h1>
+              <button type="button" className="linkish" onClick={signOut}>Sign out</button>
+              {projects.length > 1 && (
+                <label htmlFor="project" style={{ marginTop: 10 }}>Build</label>
+              )}
+              {projects.length > 1 && (
+                <select id="project" value={state?.project ?? ""} onChange={(e) => switchProject(e.target.value)}>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                </select>
+              )}
             </div>
-          </section>
 
-          {state && state.funding_target > 0 && (
-            <section className="panel">
-              <h2>
-                <span>Development funding</span>
-              </h2>
-              <div className="body">
-                <div className="target">
-                  <div className="target-head">
-                    <span>Raised from all buyers</span>
-                    <b>
-                      {kes(state.total_deposited)} of {kes(state.funding_target)}
-                    </b>
-                  </div>
-                  <div className="bar">
-                    <div
-                      className="fill"
-                      style={{
-                        width: `${Math.min(100, (state.total_deposited / state.funding_target) * 100)}%`,
-                      }}
-                    />
-                  </div>
+            <section className="proj" aria-label="Money in escrow">
+              <div className="proj-photo">
+                {activeShot?.thumbnail ? (
+                  /* Evidence previews are data URLs from the verifier, not static files. */
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={activeShot.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : null}
+                <span className={`pill ${state?.status === "Stalled" ? "p-red" : "p-green"}`}>
+                  <span className="dot" />
+                  {state?.status === "Stalled" ? "Stalled" : state?.status === "Completed" ? "Complete" : state?.awaiting_sender ? "Your approval needed" : "In escrow"}
+                </span>
+              </div>
+              <div className="proj-body">
+                <div className="proj-kicker">{state ? `${state.developer_name}${state.is_remittance ? "" : " · development"}` : "No build selected"}</div>
+                <div className="label">Money protected</div>
+                <p className="big num">{state ? kes(protectedKes) : "—"}</p>
+                <div className="sub">Held in the escrow contract on Avalanche Fuji</div>
+                <div className="bar" aria-hidden="true">
+                  {(() => {
+                    const total = protectedKes + releasedKes;
+                    const relW = total > 0 ? (releasedKes / total) * 100 : 0;
+                    const awaitW = total > 0 && state?.awaiting_sender ? (Math.min(release, protectedKes) / total) * 100 : 0;
+                    return (
+                      <>
+                        <span style={{ width: `${relW}%`, background: "#7FD1A8" }} />
+                        {awaitW > 0 ? <span style={{ width: `${awaitW}%`, background: "#E39A6A" }} /> : null}
+                      </>
+                    );
+                  })()}
+                </div>
+                <div className="split">
+                  <div><small>Released</small><b className="num">{compactKes(releasedKes)}</b></div>
+                  <div><small>This stage</small><b className="num" style={{ color: "#F2B48A" }}>{compactKes(release)}</b></div>
+                  <div><small>Still held</small><b className="num">{compactKes(protectedKes)}</b></div>
                 </div>
               </div>
             </section>
-          )}
-        </div>
-      </div>
 
-      <footer>
-        <span>Your deposit is held in escrow, not by the developer</span>
-        <span>
-          <Link href={state ? `/register?project=${state.project}` : "/register"}>Drawdown register</Link>
-        </span>
-      </footer>
+            {state?.awaiting_sender && current && (
+              <button type="button" className="action" onClick={() => setTab("evidence")}>
+                <span className="cam" aria-hidden="true">
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="6" width="18" height="14" rx="3" /><circle cx="12" cy="13" r="3.5" /></svg>
+                </span>
+                <span className="t">
+                  <strong>{current.description} is ready for you</strong>
+                  <span>{images.length} photo{images.length === 1 ? "" : "s"} checked · second signature still open</span>
+                </span>
+                <IconChevron />
+              </button>
+            )}
+
+            {(needsNumber || feeDue) && (
+              <section className="box">
+                <div className="bh"><h2>{needsNumber ? "Add the number you pay from" : "Platform fee due"}</h2></div>
+                <p>{needsNumber ? "Instalments are M-Pesa prompts, so the account needs the number they go to." : "Pay the one-off platform fee on your account page before committing."}</p>
+                <Link className="btn btn-primary" href="/account">Go to your account</Link>
+              </section>
+            )}
+
+            <div className="sec">
+              <h2>Stages</h2>
+              <span>{state ? `${paidCount} of ${state.milestones.length} paid` : "—"}</span>
+            </div>
+            <div className="tl">
+              {(state?.milestones ?? []).map((m) => {
+                const prev = state ? previousCumulative(state.milestones, m) : 0;
+                const share = state ? scheduledShare(state.total_deposited, m.cumulative, prev) : 0;
+                const cls = m.released ? "done" : m.current ? "now" : "";
+                return (
+                  <div className={`tl-row ${cls}`} key={m.id}>
+                    <span className="node" aria-hidden="true">{m.released ? <IconCheck size={13} /> : m.current ? <span style={{ width: 8, height: 8, borderRadius: "50%", background: "#fff" }} /> : null}</span>
+                    <div>
+                      <h3>{m.description}</h3>
+                      <p style={m.current && state?.awaiting_sender ? { color: "var(--clay-text)", fontWeight: 700 } : undefined}>
+                        {m.released ? `Paid · ${m.percent}%` : m.current ? (state?.awaiting_sender ? `Your approval needed · ${m.percent}%` : `In progress · ${m.percent}%`) : `Not started · ${m.percent}%`}
+                      </p>
+                    </div>
+                    <div className="amt num">
+                      {state && state.total_deposited > 0 ? (m.released ? "—" : share.toLocaleString("en-US")) : "—"}
+                      <small style={{ color: m.released ? "var(--g700)" : undefined }}>{m.released ? "Paid" : m.current ? "This stage" : "Scheduled"}</small>
+                    </div>
+                  </div>
+                );
+              })}
+              {!state && <p className="empty">No milestone schedule until a build is selected.</p>}
+            </div>
+            <button type="button" className="seal-note linkish" onClick={openRecord} disabled={!state}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z" /></svg>
+              Every release is sealed in a tamper-evident record.
+            </button>
+          </>
+        )}
+
+        {session?.sender && tab === "evidence" && (
+          <Evidence
+            state={state}
+            current={current}
+            images={images}
+            shot={shot}
+            setShot={setShot}
+            isSender={isSender}
+            release={release}
+            busy={busy}
+            reason={reason}
+            setReason={setReason}
+            showReason={showReason}
+            setShowReason={setShowReason}
+            onBack={() => setTab("home")}
+            onDecide={decide}
+            onRecord={openRecord}
+            over={over}
+          />
+        )}
+
+        {session?.sender && tab === "pay" && (
+          <Pay
+            state={state}
+            me={me}
+            signedIn={signedIn}
+            amount={amount}
+            setAmount={setAmount}
+            custom={custom}
+            setCustom={setCustom}
+            name={name}
+            setName={setName}
+            email={email}
+            setEmail={setEmail}
+            commitment={commitment}
+            setCommitment={setCommitment}
+            busy={busy}
+            over={over}
+            feeDue={feeDue}
+            needsNumber={needsNumber}
+            onRegister={register}
+            onPay={payInstalment}
+            onClose={() => setTab("home")}
+          />
+        )}
+      </main>
+
+      {session?.sender && (
+        <nav className="tabbar" aria-label="Build">
+          <TabButton id="home" tab={tab} setTab={setTab} label="Home" icon={<HomeIcon />} />
+          <TabButton id="pay" tab={tab} setTab={setTab} label="Pay in" icon={<PlusIcon />} />
+          <TabButton id="evidence" tab={tab} setTab={setTab} label="Evidence" icon={<CamIcon />} />
+          <button type="button" onClick={openRecord} disabled={!state}>
+            <ShieldIcon />
+            Record
+          </button>
+        </nav>
+      )}
+
+      {prompt && (
+        <div className="sheet-root">
+          <button type="button" className="sheet-scrim" aria-label="Close payment status" onClick={() => setPrompt(null)} />
+          <div className="sheet" role="dialog" aria-modal="true" aria-labelledby="mpesa-title">
+            <div className="grab" />
+            <div className="sheet-intro">
+              <div className="phone-ic" aria-hidden="true">
+                <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="6" y="2" width="12" height="20" rx="3" /><path d="M10.5 18h3" /></svg>
+              </div>
+              <div>
+                <h2 id="mpesa-title">Check your phone</h2>
+                <p className="hint" style={{ margin: 0 }}>Enter your M-Pesa PIN on {maskPhone(signedIn)}. Datum will never ask for it.</p>
+              </div>
+            </div>
+            <div style={{ marginTop: 12 }}>
+              <div className="st done">
+                <span className="n"><IconCheck size={14} /></span>
+                <div>
+                  <h3>Payment request sent</h3>
+                  <p>{new Date(prompt.at).toLocaleTimeString("en-KE", { hour: "2-digit", minute: "2-digit" })} · {kes(prompt.amount)} by M-Pesa prompt</p>
+                </div>
+              </div>
+              <div className="st">
+                <span className="n" style={{ borderColor: "var(--clay)", color: "var(--clay-text)" }}>2</span>
+                <div>
+                  <h3 style={{ color: "var(--clay-text)" }}>Waiting for your PIN</h3>
+                  <p>Approve the prompt on your handset. This page updates when Safaricom confirms.</p>
+                </div>
+              </div>
+              <div className="st">
+                <span className="n">3</span>
+                <div>
+                  <h3 style={{ color: "var(--ink3)" }}>Recorded in escrow</h3>
+                  <p>The amount is added to the protected balance for {state?.site ?? "this build"}. It is not a bank transfer.</p>
+                </div>
+              </div>
+            </div>
+            <div className="sheet-actions">
+              <button type="button" className="ghost" onClick={payInstalment} disabled={busy !== null || over}>{busy === "deposit" ? "Sending…" : "Resend prompt"}</button>
+              <button type="button" className="ghost" onClick={() => setPrompt(null)}>Close</button>
+            </div>
+            <p className="fine">Don&apos;t share your PIN. Datum will never ask for it.</p>
+          </div>
+        </div>
+      )}
     </div>
   );
+}
+
+function TabButton({ id, tab, setTab, label, icon }: { id: Tab; tab: Tab; setTab: (t: Tab) => void; label: string; icon: ReactNode }) {
+  return (
+    <button type="button" aria-current={tab === id ? "page" : undefined} onClick={() => setTab(id)}>
+      {icon}
+      {label}
+    </button>
+  );
+}
+
+function Evidence({
+  state, current, images, shot, setShot, isSender, release, busy, reason, setReason, showReason, setShowReason, onBack, onDecide, onRecord, over,
+}: {
+  state: ProjectState | null;
+  current: Milestone | null;
+  images: VerdictImage[];
+  shot: number;
+  setShot: (n: number) => void;
+  isSender: boolean;
+  release: number;
+  busy: string | null;
+  reason: string;
+  setReason: (v: string) => void;
+  showReason: boolean;
+  setShowReason: (v: boolean) => void;
+  onBack: () => void;
+  onDecide: (d: "approve" | "decline") => void;
+  onRecord: () => void;
+  over: boolean;
+}) {
+  const index = images.length ? Math.min(shot, images.length - 1) : 0;
+  const image = images[index] ?? null;
+  const stageNo = current ? current.id + 1 : 0;
+  const total = state?.milestones.length ?? 0;
+  const signers = current?.signers ?? [];
+  const passed = CHECKS.filter((c) => images.length > 0 && images.every((img) => img.checks[c.key])).length;
+
+  return (
+    <section>
+      <div className="subnav">
+        <button type="button" className="iconbtn" aria-label="Back to the build" onClick={onBack}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M15 6l-6 6 6 6" /></svg>
+        </button>
+        <strong>{current ? `Stage ${stageNo} of ${total}` : "Evidence"}</strong>
+        <button type="button" className="iconbtn" aria-label="Record details" onClick={onRecord}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v6M12 7.5v.5" /></svg>
+        </button>
+      </div>
+      <div className="stage-head">
+        {state?.awaiting_sender ? <span className="pill p-clay"><span className="dot" /> Waiting for your approval</span> : <span className="pill p-grey">{state?.status ?? "No build"}</span>}
+        <h1>{current?.description ?? "No stage in progress"}</h1>
+        <div className="stage-meta">
+          <span>{state?.developer_name ?? "—"}</span>
+          <b className="num">{release > 0 ? kes(release) : current ? `${current.percent}%` : ""}</b>
+        </div>
+      </div>
+      <div className="gal">
+        <div className="gal-main">
+          {image?.thumbnail ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={image.thumbnail} alt={image.filename} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+          ) : (
+            <div className="gal-empty">{state?.last_verdict ? "This submission has no preview." : "No photographs for this stage yet."}</div>
+          )}
+          {images.length > 0 && (
+            <div className="gal-meta">
+              <span className="chip">{state?.site ?? "Site"}</span>
+              <span className="chip">{index + 1} / {images.length}</span>
+            </div>
+          )}
+        </div>
+        {images.length > 1 && (
+          <div className="thumbs">
+            {images.map((img, i) => (
+              <button type="button" key={img.filename} aria-label={`Photo ${i + 1}`} aria-current={i === index} onClick={() => setShot(i)}>
+                {img.thumbnail ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={img.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : null}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      <div className="box">
+        <div className="bh">
+          <h2>Photo checks</h2>
+          <span className={`pill ${passed === CHECKS.length && images.length ? "p-green" : "p-grey"}`}>{images.length ? `${passed} of ${CHECKS.length} passed` : "No photos"}</span>
+        </div>
+        {CHECKS.map((check) => {
+          const failed = images.filter((img) => img.checks[check.key] === false);
+          const ok = images.length > 0 && failed.length === 0;
+          const detail = !images.length
+            ? "Waiting for a submission"
+            : ok
+              ? check.pass
+              : [...new Set(failed.flatMap((img) => img.notes))].join(" · ") || `${failed.length} photo${failed.length === 1 ? "" : "s"} did not pass`;
+          return (
+            <div className="chk" key={check.key}>
+              <span className={ok ? "ok" : "bad"}>{ok ? <IconCheck /> : <Cross />}</span>
+              <div>
+                <h3 style={ok ? undefined : { color: "var(--red)" }}>{check.title}</h3>
+                <p>{detail}</p>
+              </div>
+              <b style={{ color: ok ? "var(--g700)" : "var(--red)", fontSize: 12 }}>{images.length ? (ok ? "Pass" : "Fail") : "—"}</b>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="box">
+        <div className="bh"><h2>Sign-off</h2><span style={{ fontWeight: 700, color: "var(--ink2)", fontSize: 13 }}>2 of 3 needed</span></div>
+        <Signer initials="P" tone="green" title="Photo check" detail={signers.includes("Evidence pipeline") ? "Signed on the accepted photographs" : "Not signed yet"} status={signers.includes("Evidence pipeline") ? "Signed" : "Waiting"} />
+        <Signer
+          initials={isSender ? initials(state?.is_remittance ? "You" : "Surveyor") : "2"}
+          tone="clay"
+          title={state?.is_remittance ? (isSender ? "You" : "Sender") : "Quantity surveyor"}
+          detail={state?.is_remittance ? "Your yes is the second signature on a remittance build" : "The assigned second signature"}
+          status={signers.includes(state?.is_remittance ? "Sender" : "Quantity surveyor") ? "Signed" : "Pending"}
+        />
+        <Signer initials="D" tone="grey" title="Platform" detail="A third signature. Two of the three release this stage." status={signers.includes("Platform") ? "Signed" : "Not yet"} />
+      </div>
+
+      {isSender && state?.awaiting_sender && (
+        <div className="cta">
+          <button type="button" onClick={() => onDecide("approve")} disabled={busy !== null || over}>
+            {busy === "approve" ? "Releasing…" : release > 0 ? `Approve and release ${kes(release)}` : "Approve this stage"}
+          </button>
+          {showReason ? (
+            <>
+              <label htmlFor="why">Why you are not satisfied</label>
+              <textarea id="why" rows={3} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="What should be photographed again" />
+              <button type="button" className="danger" onClick={() => onDecide("decline")} disabled={busy !== null}>Send it back</button>
+            </>
+          ) : (
+            <button type="button" className="danger" onClick={() => setShowReason(true)} disabled={busy !== null}>Not satisfied, say why</button>
+          )}
+          <p className="fine">
+            {release > 0
+              ? `Approving pays ${kes(release)} from the escrow to the builder for this stage. The rest stays in the contract.`
+              : "Approving signs this stage. Nothing is paid out until money is in the escrow."}
+          </p>
+        </div>
+      )}
+
+      <button type="button" className="record-launch" onClick={onRecord}>
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z" /></svg>
+        <span style={{ flex: 1 }}>
+          <strong>Record details</strong>
+          <span>{state?.last_verdict?.evidence_hash ? `Fingerprint ${shortHex(state.last_verdict.evidence_hash)}` : "Open the sealed record"}</span>
+        </span>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+      </button>
+    </section>
+  );
+}
+
+function Signer({ initials: mark, tone, title, detail, status }: { initials: string; tone: "green" | "clay" | "grey"; title: string; detail: string; status: string }) {
+  const bg = tone === "green" ? "var(--g100)" : tone === "clay" ? "var(--clay100)" : "var(--cream2)";
+  const color = tone === "green" ? "var(--g800)" : tone === "clay" ? "var(--clay-text)" : "var(--ink2)";
+  const pill = status === "Signed" ? "p-green" : status === "Pending" ? "p-clay" : "p-grey";
+  return (
+    <div className="sig">
+      <div className="sav" style={{ background: bg, color }}>{mark}</div>
+      <div className="who"><strong>{title}</strong><span>{detail}</span></div>
+      <span className={`pill ${pill}`}>{status}</span>
+    </div>
+  );
+}
+
+function Pay({
+  state, me, signedIn, amount, setAmount, custom, setCustom, name, setName, email, setEmail, commitment, setCommitment, busy, over, feeDue, needsNumber, onRegister, onPay, onClose,
+}: {
+  state: ProjectState | null;
+  me: { commitment: number | null; contributed: number; phone: string } | null;
+  signedIn: string | null;
+  amount: number;
+  setAmount: (n: number) => void;
+  custom: boolean;
+  setCustom: (v: boolean) => void;
+  name: string;
+  setName: (v: string) => void;
+  email: string;
+  setEmail: (v: string) => void;
+  commitment: string;
+  setCommitment: (v: string) => void;
+  busy: string | null;
+  over: boolean;
+  feeDue: boolean;
+  needsNumber: boolean;
+  onRegister: () => void;
+  onPay: () => void;
+  onClose: () => void;
+}) {
+  return (
+    <section className="pay">
+      <div className="subnav">
+        <button type="button" className="iconbtn" aria-label="Close top up" onClick={onClose}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+        </button>
+        <strong>Top up your build</strong>
+        <span style={{ width: 40 }} />
+      </div>
+      {(needsNumber || feeDue) && (
+        <section className="box">
+          <p>{needsNumber ? "Add the M-Pesa number on your account before paying in." : "Pay the platform fee on your account before paying in."}</p>
+          <Link className="btn btn-primary" href="/account">Go to your account</Link>
+        </section>
+      )}
+      {!feeDue && !me && (
+        <section className="box">
+          <div className="bh"><h2>Your commitment</h2></div>
+          <p>Tell us who you are and what you intend to put in. The escrow is managed for you, and a refund goes back to {maskPhone(signedIn)}.</p>
+          <div className="row">
+            <div>
+              <label htmlFor="cname">Your name</label>
+              <input id="cname" value={name} onChange={(e) => setName(e.target.value)} />
+            </div>
+            <div>
+              <label htmlFor="cemail">Email</label>
+              <input id="cemail" type="email" autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+            </div>
+          </div>
+          <label htmlFor="commitment">Committing (KES)</label>
+          <input id="commitment" inputMode="numeric" value={commitment} onChange={(e) => setCommitment(e.target.value)} />
+          <button type="button" onClick={onRegister} disabled={over || busy !== null || name.trim().length < 2 || !email.trim() || !Number.parseInt(commitment, 10)}>
+            {busy === "register" ? "Registering…" : "Register my commitment"}
+          </button>
+        </section>
+      )}
+      {me && (
+        <>
+          <div className="pay-amt">
+            <div style={{ fontSize: 13, fontWeight: 650, color: "var(--ink3)" }}>Amount</div>
+            <div className="v num">{kes(amount)}</div>
+            <div style={{ fontSize: 13, color: "var(--ink3)", fontWeight: 650 }}>
+              {me.commitment ? `${kes(me.contributed)} of ${kes(me.commitment)} committed` : "M-Pesa prompt to your number"}
+            </div>
+            <div className="chips" role="group" aria-label="Amount">
+              {PRESETS.map((n) => (
+                <button type="button" key={n} aria-pressed={!custom && amount === n} onClick={() => { setCustom(false); setAmount(n); }}>{n.toLocaleString("en-US")}</button>
+              ))}
+              <button type="button" aria-pressed={custom} onClick={() => setCustom(true)}>Other</button>
+            </div>
+            {custom && (
+              <div style={{ marginTop: 12, textAlign: "left" }}>
+                <label htmlFor="amount">Other amount (KES)</label>
+                <input id="amount" inputMode="numeric" value={String(amount)} onChange={(e) => setAmount(Number.parseInt(e.target.value || "0", 10) || 0)} />
+              </div>
+            )}
+          </div>
+          <div className="sum">
+            <div className="kv"><span>Pay from</span><span><span className="mp">M-PESA</span>{maskPhone(me.phone || signedIn)}</span></div>
+            <div className="kv"><span>Goes to</span><span>Escrow for {state?.site ?? "this build"}</span></div>
+            <div className="kv"><span>For</span><span>{state?.site ?? "—"}</span></div>
+            <div className="kv"><span>Fee on this payment</span><span style={{ color: "var(--g700)" }}>None</span></div>
+          </div>
+          <div className="cta">
+            <button type="button" onClick={onPay} disabled={over || busy !== null || amount <= 0}>{busy === "deposit" ? "Sending prompt…" : "Send M-Pesa prompt"}</button>
+            <p className="fine">Approve the prompt on your handset. The protected balance updates when Safaricom confirms.</p>
+          </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+function recordFor(state: ProjectState, current: Milestone | null, traceAddress: string | null): RecordDetail {
+  const hash = state.last_verdict?.evidence_hash ?? current?.evidence_hash ?? null;
+  return {
+    title: "Tamper-evident record",
+    entry: hash ? `Entry ${shortHex(hash, 8, 4)}` : state.site,
+    sealed: Boolean(hash),
+    summary: "A fingerprint of the photos and signatures for this stage is written to the public registry. If they change later, the fingerprint stops matching.",
+    events: [
+      state.last_verdict
+        ? { tone: state.last_verdict.accepted ? "ok" : "wait", title: state.last_verdict.accepted ? "Photographs passed the checks" : "Photographs were rejected", when: "Latest submission" }
+        : { tone: "muted", title: "No photographs yet", when: "—" },
+      { tone: (current?.signers.length ?? 0) > 0 ? "ok" : "muted", title: current?.signers.length ? current.signers.join(", ") : "No signatures yet", when: current ? `${current.approvals} of 2` : "—" },
+      { tone: state.awaiting_sender ? "wait" : "muted", title: state.awaiting_sender ? "Waiting for the sender" : state.status, when: "Now" },
+    ],
+    rows: [
+      { label: "Evidence fingerprint", value: shortHex(hash, 8, 4) },
+      { label: "Ledger", value: "Avalanche Fuji" },
+      { label: "Funds", value: "In escrow · not a bank balance" },
+    ],
+    traceHref: traceAddress ? `/trace/${traceAddress}` : null,
+    explorerHref: `${EXPLORER}/address/${state.contract}`,
+  };
+}
+
+function Cross() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
+  );
+}
+function HomeIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M3 11l9-7 9 7v9a1 1 0 01-1 1h-5v-6H9v6H4a1 1 0 01-1-1z" /></svg>;
+}
+function PlusIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 5v14M5 12h14" /></svg>;
+}
+function CamIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="6" width="18" height="14" rx="3" /><circle cx="12" cy="13" r="3.5" /></svg>;
+}
+function ShieldIcon() {
+  return <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6l8-3z" /></svg>;
 }

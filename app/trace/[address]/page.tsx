@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
 import { use, useEffect, useState } from "react";
 
-import { AddressLink, NavLinks, TxLink } from "@/lib/ui/nav";
+import { AppFooter, AppHeader } from "@/lib/ui/chrome";
+import { shortHex } from "@/lib/ui/format";
+import { AddressLink, TxLink } from "@/lib/ui/nav";
 
 /**
  * Everything done from one address, for anyone who has the address. Kinds,
@@ -30,24 +31,17 @@ export default function TracePage({ params }: { params: Promise<{ address: strin
   }, [address]);
 
   return (
-    <div className="wrap">
-      <header className="masthead">
-        <h1>Activity at one address</h1>
-        <div className="meta">
-          <NavLinks current="account" />
-          <span>Address <b>{address}</b></span>
-          {trace?.holder && <span>Role <b>{trace.holder.role}</b></span>}
-          {trace?.holder && <span>Identity <b>{trace.holder.kyc === "verified" ? "verified" : "not verified"}</b></span>}
-        </div>
-      </header>
-
-      <section className="explainer">
-        <p className="lede">
-          Every action on Datum is hashed and written to the registry contract against the address of
-          whoever did it. This is that record for one address, with the transaction that carries each
-          entry. What was done is named; the details stay with the person.
+    <>
+      <AppHeader current="account" />
+      <main id="main" className="wrap">
+      <div className="page-intro">
+        <h1>Activity record</h1>
+        <p>
+          Every action on Datum is hashed and written to the registry against the address of whoever did it.
+          This page is the record for {shortHex(address, 8, 6)}.
+          {trace?.holder ? ` Role ${trace.holder.role}, ${trace.holder.kyc === "verified" ? "verified" : "not verified"}.` : ""}
         </p>
-      </section>
+      </div>
 
       {error && <div className="toast err">{error}</div>}
 
@@ -77,7 +71,7 @@ export default function TracePage({ params }: { params: Promise<{ address: strin
                 <tr key={a.id}>
                   <td>{new Date(a.at).toLocaleString("en-KE", { dateStyle: "medium", timeStyle: "short" })}</td>
                   <td><span className="pill">{a.kind}</span></td>
-                  <td className="evhash" style={{ marginTop: 0 }}>{a.hash.slice(0, 18)}…</td>
+                  <td className="mono">{shortHex(a.hash, 10, 4)}</td>
                   <td className="n"><TxLink hash={a.tx} /></td>
                 </tr>
               ))}
@@ -86,10 +80,8 @@ export default function TracePage({ params }: { params: Promise<{ address: strin
         </div>
       </section>
 
-      <footer>
-        <span>Avalanche Fuji</span>
-        <span><Link href="/account">Your account</Link></span>
-      </footer>
-    </div>
+      </main>
+      <AppFooter />
+    </>
   );
 }

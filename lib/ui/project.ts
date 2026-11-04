@@ -73,6 +73,10 @@ export interface ProjectState {
   sender_phone: string | null;
   awaiting_sender: boolean;
   contract: string;
+  /** ISO time of the last deposit or release, when the chain read succeeded. */
+  last_progress_at?: string;
+  /** Seconds of silence before anyone may declare the project stalled. */
+  stall_after_seconds?: number;
 }
 
 export interface ProjectSummary {
@@ -156,7 +160,8 @@ export function useProject(): ProjectHandle {
   const refresh = useCallback(async () => {
     try {
       const response = await fetch(api("/api/state"), { cache: "no-store" });
-      const data = (await response.json()) as ProjectState & { error?: string };
+      const data = (await response.json().catch(() => null)) as (ProjectState & { error?: string }) | null;
+      if (!data) throw new Error("The register could not be read");
       if (!response.ok) throw new Error(data.error ?? "State unavailable");
       setState(data);
       setLoadError(null);

@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 
-import { AddressLink, TxLink } from "./nav";
+import { shortHex } from "./format";
+import { RecordAddress, RecordTx } from "./record";
 import { call, kes } from "./project";
 
 /**
@@ -145,9 +146,9 @@ export function ReviewPanels({
               </div>
               <div className="review-meta">
                 {s.company_name ? `${s.company_name} · ` : ""}
-                {s.id_type.replace(/_/g, " ")} ending {s.id_last4} · {s.document} · <AddressLink address={s.address} />
+                {s.id_type.replace(/_/g, " ")} ending {s.id_last4} · {s.document} · <RecordAddress address={s.address} />
               </div>
-              <div className="evhash">sha256 {s.document_sha256}</div>
+              <div className="note">Document fingerprint {shortHex(s.document_sha256, 10, 6)}</div>
               <div className="btns">
                 <button onClick={() => reviewKyc(s.id, "verify")} disabled={busy !== null}>Verify</button>
                 <button className="danger" onClick={() => reviewKyc(s.id, "reject")} disabled={busy !== null}>Reject</button>
@@ -175,7 +176,7 @@ export function ReviewPanels({
                 {l.owner_company ?? l.owner} ({l.owner_role}) · {l.location} · {kes(l.price_kes)} · fee {l.owner_fee} · {l.owner_kyc === "verified" ? "verified" : "not yet verified"}
               </div>
               <div className="review-meta">
-                Reach out: {l.owner_email ?? "no email"} · {l.owner_phone ?? "no number"} · <AddressLink address={l.owner_address} />
+                Reach out: {l.owner_email ?? "no email"} · {l.owner_phone ?? "no number"} · <RecordAddress address={l.owner_address} />
               </div>
               {l.images > 0 && (
                 <div className="thumbs">
@@ -222,7 +223,7 @@ export function ReviewPanels({
               {trustees.map((t) => (
                 <tr key={t.id}>
                   <td>{t.display_name}</td>
-                  <td className="n"><AddressLink address={t.address} /></td>
+                  <td className="n"><RecordAddress address={t.address} /></td>
                 </tr>
               ))}
               {trustees.length === 0 && (
@@ -289,8 +290,8 @@ export function ActivityFeed({ scope }: { scope: "mine" | "all" }) {
               <tr key={a.id}>
                 <td>{new Date(a.at).toLocaleString("en-KE", { dateStyle: "short", timeStyle: "short" })}</td>
                 <td><span className="pill">{a.kind}</span></td>
-                <td><AddressLink address={a.actor} /></td>
-                <td className="n">{a.error && !a.tx ? <span className="held-c">retrying</span> : <TxLink hash={a.tx} />}</td>
+                <td><RecordAddress address={a.actor} label="Actor record" /></td>
+                <td className="n">{a.error && !a.tx ? <span className="held-c">retrying</span> : <RecordTx hash={a.tx} />}</td>
               </tr>
             ))}
           </tbody>
@@ -412,7 +413,7 @@ export function BuildRequestsPanel({
               {b.location} · budget {kes(b.budget_kes)} · deposit {kes(b.initial_deposit_kes)} {b.deposit_paid_at ? "received" : "waiting"}
             </div>
             <div className="review-meta">
-              Owner {b.owner?.name} · {b.owner?.email ?? "no email"} · {b.owner?.phone ?? "no number"} · {b.owner && <AddressLink address={b.owner.address} />}
+              Owner {b.owner?.name} · {b.owner?.email ?? "no email"} · {b.owner?.phone ?? "no number"} · {b.owner && <RecordAddress address={b.owner.address} />}
             </div>
             <p style={{ fontSize: 13 }}>{b.description}</p>
             {!b.deposit_paid_at && operator && (

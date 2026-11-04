@@ -3,8 +3,9 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-import { AddressLink, NavLinks, TxLink } from "@/lib/ui/nav";
+import { AppFooter, AppHeader } from "@/lib/ui/chrome";
 import { call, kes, useProject } from "@/lib/ui/project";
+import { RecordAddress, RecordTx } from "@/lib/ui/record";
 import { ActivityFeed, BuildRequestsPanel, ReviewPanels } from "@/lib/ui/review";
 
 /**
@@ -162,21 +163,16 @@ export default function AccountPage() {
   const identityLine = account ? (account.role === "trustee" ? "appointed by the platform" : account.kyc_status === "verified" ? "verified by Datum staff" : view?.listings.some((l) => l.status === "pending_review") ? "staff will reach out to you" : "after you post") : "";
 
   return (
-    <div className="wrap">
-      <header className="masthead">
+    <>
+      <AppHeader current="account" />
+      <main id="main" className="wrap">
+      <div className="page-intro">
         <h1>{account ? account.display_name : "Your account"}</h1>
-        <div className="meta">
-          <NavLinks current="account" />
-          {account && <span>Role <b>{account.role}</b></span>}
-          {account && <span>Verification <b>{identityLine}</b></span>}
-          {session && (
-            <span>
-              <b>{session.subject}</b>{" "}
-              <a href="#" onClick={(e) => { e.preventDefault(); signOut(); }}>sign out</a>
-            </span>
-          )}
-        </div>
-      </header>
+        <p>
+          {account ? <>Role {account.role}. {identityLine}.</> : "Prove an email or an M-Pesa number, then open the account."}
+          {session ? <> <button type="button" className="linkish" onClick={signOut}>Sign out</button></> : null}
+        </p>
+      </div>
 
       {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.text}</div>}
 
@@ -278,8 +274,8 @@ export default function AccountPage() {
                 <p>{ROLE_COPY[account.role]}</p>
                 <table>
                   <tbody>
-                    <tr><td>Address</td><td className="n"><AddressLink address={account.address} /></td></tr>
-                    <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <TxLink hash={account.registry_tx} /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
+                    <tr><td>Record</td><td className="n"><RecordAddress address={account.address} /></td></tr>
+                    <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <RecordTx hash={account.registry_tx} label="Registration record" /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
                     {account.email && <tr><td>Email</td><td className="n">{account.email} {account.email_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</td></tr>}
                     <tr><td>M-Pesa number</td><td className="n">{account.phone ? <>{account.phone} {account.phone_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</> : "—"}</td></tr>
                     {(account.fee_required || account.fee_status === "paid") && <tr><td>Platform fee</td><td className="n">{feeState === "paid" ? <span className="sig">paid</span> : feeState === "waiting" ? <span className="held-c">waiting for M-Pesa</span> : kes(account.fee_kes) + " due"}</td></tr>}
@@ -452,7 +448,7 @@ export default function AccountPage() {
                           <td>{l.title}{l.project_id && <> <Link href={`/register?project=${l.project_id}`}>register →</Link></>}</td>
                           <td><span className="pill">{STATUS_LABEL[l.status] ?? l.status}</span>{l.note ? <div className="hint">{l.note}</div> : null}</td>
                           <td className="n">{kes(l.price_kes)}</td>
-                          <td className="n"><TxLink hash={l.tx} /></td>
+                          <td className="n"><RecordTx hash={l.tx} label="Listing record" /></td>
                         </tr>
                       ))}
                     </tbody>
@@ -504,10 +500,8 @@ export default function AccountPage() {
         </div>
       )}
 
-      <footer>
-        <span>Custodial by design: your key is managed for you</span>
-        <span><Link href="/listings">Listings</Link></span>
-      </footer>
-    </div>
+      </main>
+      <AppFooter />
+    </>
   );
 }
