@@ -2,9 +2,13 @@ import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
+import { createAccount, currentAccount, ensureRegistered, publicAccount, friendlyError, setAccountPhone } from "@/lib/accounts";
 import { currentSender } from "@/lib/auth";
-import { createAccount, currentAccount, ensureRegistered, publicAccount, friendlyError } from "@/lib/accounts";
+import { stkQuery } from "@/lib/daraja";
+import { googleSignInEnabled } from "@/lib/google-auth";
 import { db, schema } from "@/lib/db";
+import { dbFeeDirectory } from "@/lib/onboarding/db";
+import { reconcileFeeRow } from "@/lib/onboarding/fee";
 import { SELF_SERVICE_ROLES } from "@/lib/registry";
 
 /**
@@ -13,7 +17,7 @@ import { SELF_SERVICE_ROLES } from "@/lib/registry";
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const session = currentSender(request);
-  if (!session) return NextResponse.json({ session: null, account: null });
+  if (!session) return NextResponse.json({ session: null, account: null, google: googleSignInEnabled() });
   let account = await currentAccount(request);
   const who = { subject: session.subject, phone: session.phone, email: session.email };
   if (!account) return NextResponse.json({ session: who, account: null });
@@ -49,8 +53,25 @@ export async function GET(request: Request): Promise<NextResponse> {
           .where(eq(schema.projects.trusteeAccountId, account.id))
       : [];
 
+  const [feeRow] = await database
+    .select()
+    .from(schema.pendingPayments)
+    .where(and(eq(schema.pendingPayments.accountId, account.id), eq(schema.pendingPayments.purpose, "fee")))
+    .orderBy(desc(schema.pendingPayments.id))
+    .limit(1);
+  if (feeRow && (feeRow.status === "pending" || feeRow.status === "verifying")) {
+    const current = await dbFeeDirectory().findByCheckout(feeRow.checkoutRequestId);
+    if (current) {
+      try {
+        await reconcileFeeRow(dbFeeDirectory(), current, Date.now(), (id) => stkQuery(id));
+        account = (await currentAccount(request)) ?? account;
+      } catch {
+        // A provider that cannot be reached leaves the prompt pending.
+      }
+    }
+  }
   const [fee] = await database
-    .select({ status: schema.pendingPayments.status, created_at: schema.pendingPayments.createdAt, reason: schema.pendingPayments.resultDescription })
+    .select({ status: schema.pendingPayments.status, created_at: schema.pendingPayments.createdAt, reason: schema.pendingPayments.resultDescription, amount_kes: schema.pendingPayments.amountKes, phone: schema.pendingPayments.phone })
     .from(schema.pendingPayments)
     .where(and(eq(schema.pendingPayments.accountId, account.id), eq(schema.pendingPayments.purpose, "fee")))
     .orderBy(desc(schema.pendingPayments.id))
@@ -58,6 +79,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     session: who,
+    google: googleSignInEnabled(),
     account: publicAccount(account),
     fee_payment: fee ?? null,
     kyc: kyc
@@ -94,12 +116,13 @@ const bodySchema = z.object({
   displayName: z.string().trim().min(2).max(80),
   companyName: z.string().trim().max(120).optional(),
   registrationNumber: z.string().trim().max(40).optional(),
+  phone: z.string().trim().regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678"),
 });
 
-/** Open an account on the proven number or email. One per subject; the role is chosen once. */
+/** Open an account on the email that was just verified. The role is chosen once. */
 export async function POST(request: Request): Promise<NextResponse> {
   const session = currentSender(request);
-  if (!session) return NextResponse.json({ error: "Verify your phone number first" }, { status: 401 });
+  if (!session?.email) return NextResponse.json({ error: "Sign in with your email first" }, { status: 401 });
   if (await currentAccount(request)) {
     return NextResponse.json({ error: "This address already has an account" }, { status: 409 });
   }
@@ -115,11 +138,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "A company account needs the registered company name" }, { status: 400 });
   }
   try {
-    const account = await createAccount({ subject: session.subject, ...input });
+    const opened = await createAccount({ subject: session.subject, role: input.role, displayName: input.displayName, companyName: input.companyName, registrationNumber: input.registrationNumber });
+    const account = await setAccountPhone(opened, input.phone);
     return NextResponse.json({
       ok: true,
       account: publicAccount(account),
-      message: `Account opened. Your Avalanche address is ${account.address}.`,
+      message: `Account opened. Prompts will go to ${account.phone}. Saving that number does not prove the handset.`,
     });
   } catch (error) {
     return NextResponse.json({ error: friendlyError(error, "Could not open the account; try again") }, { status: 400 });

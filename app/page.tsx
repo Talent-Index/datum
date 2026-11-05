@@ -6,7 +6,6 @@ import { useEffect, useState } from "react";
 
 import { IconArrow, IconCheck, Logo } from "@/lib/ui/chrome";
 import { compactKes, kes } from "@/lib/ui/format";
-import { type ProjectSummary } from "@/lib/ui/project";
 
 /**
  * Front door. The figures are totals read from the live projects. When the
@@ -44,42 +43,39 @@ export default function Home() {
   useEffect(() => {
     void (async () => {
       try {
-        const [p, l] = await Promise.all([
-          fetch("/api/projects", { cache: "no-store" }).then((r) => r.json() as Promise<{ projects: ProjectSummary[] }>),
+        const [board, l] = await Promise.all([
+          fetch("/api/board", { cache: "no-store" }).then((r) => r.json() as Promise<{ projects: Array<{ state: {
+            site: string;
+            developer_name: string;
+            held: number;
+            total_released: number;
+            total_deposited: number;
+            status: string;
+            awaiting_sender: boolean;
+            milestones: Array<{ description: string; released: boolean; current: boolean }>;
+          } | null }> }>),
           fetch("/api/listings", { cache: "no-store" }).then((r) => r.json() as Promise<{ listings: unknown[] }>),
         ]);
-        const states = await Promise.all(
-          p.projects.map(async (project) => {
-            const response = await fetch(`/api/state?project=${encodeURIComponent(project.id)}`, { cache: "no-store" });
-            if (!response.ok) return null;
-            const data = (await response.json()) as {
-              site: string;
-              developer_name: string;
-              held: number;
-              total_released: number;
-              total_deposited: number;
-              status: string;
-              awaiting_sender: boolean;
-              milestones: Array<{ description: string; released: boolean; current: boolean }>;
-            };
-            const paid = data.milestones.filter((m) => m.released).length;
-            return {
-              name: data.site,
-              developer: data.developer_name,
-              held: data.held,
-              released: data.total_released,
-              deposited: data.total_deposited,
-              stagesPaid: paid,
-              stages: data.milestones.length,
-              status: data.status,
-              awaiting: data.awaiting_sender,
-              current: data.milestones.find((m) => m.current)?.description ?? null,
-            } satisfies LiveProject;
-          }),
-        );
+        const states = board.projects.map((row) => {
+          const data = row.state;
+          if (!data) return null;
+          const paid = data.milestones.filter((m) => m.released).length;
+          return {
+            name: data.site,
+            developer: data.developer_name,
+            held: data.held,
+            released: data.total_released,
+            deposited: data.total_deposited,
+            stagesPaid: paid,
+            stages: data.milestones.length,
+            status: data.status,
+            awaiting: data.awaiting_sender,
+            current: data.milestones.find((m) => m.current)?.description ?? null,
+          } satisfies LiveProject;
+        });
         const ok = states.filter((s): s is LiveProject => s !== null);
         setLive({
-          projects: p.projects.length,
+          projects: board.projects.length,
           listings: l.listings.length,
           held: ok.reduce((s, x) => s + x.held, 0),
           released: ok.reduce((s, x) => s + x.released, 0),
@@ -206,7 +202,7 @@ export default function Home() {
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 10l9-6 9 6M5 10v8M19 10v8M3 20h18" /></svg>
             </div>
             <h3>Held in escrow</h3>
-            <p>A confirmed payment becomes a shilling claim in a smart contract. It is not paid to the builder up front, and it is not sitting in a Datum bank account.</p>
+            <p>A confirmed M-Pesa payment is held in an escrow contract on Avalanche Fuji. It is not paid to the builder up front, and Datum does not keep it in a bank account.</p>
           </div>
           <div>
             <div className="ic" aria-hidden="true">
@@ -238,7 +234,7 @@ export default function Home() {
             <article className="step">
               <span className="n">01 — Fund</span>
               <h3>Pay in by M-Pesa</h3>
-              <p>An STK prompt goes to the number you proved. When Safaricom confirms, the amount is a claim in escrow for that build.</p>
+              <p>An STK prompt goes to the M-Pesa number saved on your account. When Safaricom confirms, the amount is a claim in escrow for that build.</p>
               <div className="demo"><div className="mini"><span>M-Pesa prompt</span><b>Your amount</b></div></div>
             </article>
             <article className="step">

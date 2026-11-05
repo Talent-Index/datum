@@ -119,6 +119,7 @@ export async function stkPush(
   phone: string,
   amountKes: number,
   accountReference: string,
+  transactionDesc = "Escrow deposit",
 ): Promise<StkPushResult> {
   const config = darajaConfig();
   const token = await accessToken(config);
@@ -144,7 +145,7 @@ export async function stkPush(
       // Max 12 alphanumeric characters; not echoed in the callback, so it
       // carries a human-readable project code and nothing load-bearing.
       AccountReference: accountReference.replace(/[^A-Za-z0-9]/g, "").slice(0, 12),
-      TransactionDesc: "Escrow deposit",
+      TransactionDesc: transactionDesc,
     }),
   });
   if (!response.ok) {

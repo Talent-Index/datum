@@ -1,69 +1,100 @@
 import { NextResponse } from "next/server";
-import { and, eq, gt } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
-import { currentAccount, feeRequired, listingFeeKes } from "@/lib/accounts";
+import { currentAccount, listingFeeKes } from "@/lib/accounts";
+import { stkPush, stkQuery } from "@/lib/daraja";
 import { db, schema } from "@/lib/db";
-import { stkPush } from "@/lib/daraja";
+import { dbFeeDirectory } from "@/lib/onboarding/db";
+import { reconcileFeeRow, requestPlatformFee } from "@/lib/onboarding/fee";
 import { logActivity } from "@/lib/registry";
 
 /**
- * The platform fee: one M-Pesa prompt to the account's number. Sellers,
- * developers and companies pay it before they can post; a sender pays it
- * before they can commit. Confirmation comes through the same callback as
- * a deposit and marks the account paid and its number proven.
+ * The platform fee: one M-Pesa prompt to the number saved on this account.
+ * Sellers, developers, companies and senders pay it before they post or
+ * commit. Buyers are not charged. The prompt is sent only from this POST,
+ * never when the page loads. A paid fee is not an escrow deposit and does
+ * not verify the handset.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const account = await currentAccount(request);
   if (!account) return NextResponse.json({ error: "Open an account first" }, { status: 401 });
-  if (!feeRequired(account)) {
-    return NextResponse.json({ error: account.feeStatus === "paid" ? "The fee is already paid" : "No fee is due for this role" }, { status: 409 });
-  }
-  if (!account.phone) {
-    return NextResponse.json({ error: "Add the M-Pesa number you will pay from first" }, { status: 400 });
-  }
-  const database = db();
-  const [recent] = await database
-    .select({ id: schema.pendingPayments.id })
-    .from(schema.pendingPayments)
-    .where(
-      and(
-        eq(schema.pendingPayments.accountId, account.id),
-        eq(schema.pendingPayments.purpose, "fee"),
-        eq(schema.pendingPayments.status, "pending"),
-        gt(schema.pendingPayments.createdAt, new Date(Date.now() - 90 * 1000)),
-      ),
-    );
-  if (recent) {
-    return NextResponse.json({ error: "A prompt was sent less than 90 seconds ago; approve it on your handset" }, { status: 429 });
-  }
-
-  const kes = listingFeeKes();
-  let push;
+  const amount = listingFeeKes();
+  let result;
   try {
-    push = await stkPush(account.phone, kes, "DATUMFEE");
+    result = await requestPlatformFee(
+    dbFeeDirectory(),
+    { id: account.id, role: account.role, feeStatus: account.feeStatus, phone: account.phone },
+    Date.now(),
+    amount,
+    (checkoutRequestId) => stkQuery(checkoutRequestId),
+    async (phone, kes) => {
+      const push = await stkPush(phone, kes, "DATUMFEE", "Platform fee");
+      return { CheckoutRequestID: push.CheckoutRequestID, MerchantRequestID: push.MerchantRequestID };
+    },
+    );
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "STK push failed" }, { status: 502 });
   }
-  await database.insert(schema.pendingPayments).values({
-    checkoutRequestId: push.CheckoutRequestID,
-    merchantRequestId: push.MerchantRequestID,
-    purpose: "fee",
-    projectId: null,
-    accountId: account.id,
-    phone: account.phone,
-    amountKes: kes,
-    status: "pending",
-  });
-  await database.update(schema.accounts).set({ feeStatus: "pending" }).where(eq(schema.accounts.id, account.id));
-  await logActivity({
-    accountId: account.id,
-    actorAddress: account.address as `0x${string}`,
-    kind: "fee.requested",
-    payload: { kes, checkoutRequestId: push.CheckoutRequestID },
-  });
+  if (!result.ok) return NextResponse.json({ error: result.error }, { status: result.status });
+  if (!result.reused) {
+    await db().update(schema.accounts).set({ feeStatus: "pending" }).where(eq(schema.accounts.id, account.id));
+    await logActivity({
+      accountId: account.id,
+      actorAddress: account.address as `0x${string}`,
+      kind: "fee.requested",
+      payload: { kes: result.amountKes, checkoutRequestId: result.checkoutRequestId },
+    });
+  }
   return NextResponse.json({
     ok: true,
-    checkoutRequestId: push.CheckoutRequestID,
-    message: `Prompt sent to ${account.phone} for KES ${kes.toLocaleString("en-US")}. Approve it on the handset; this page updates once Safaricom confirms.`,
+    reused: result.reused,
+    checkoutRequestId: result.checkoutRequestId,
+    amountKes: result.amountKes,
+    phone: result.phone,
+    escrowClaim: false,
+    message: result.reused
+      ? `A prompt for KES ${result.amountKes.toLocaleString("en-US")} is already open on ${result.phone}. Approve it on the handset. Another prompt was not sent.`
+      : `Prompt sent to ${result.phone} for KES ${result.amountKes.toLocaleString("en-US")}. Approve it on the handset. This page updates when Safaricom confirms.`,
+  });
+}
+
+/** Re-check the latest fee prompt with Safaricom. Does not send a new one. */
+export async function GET(request: Request): Promise<NextResponse> {
+  const account = await currentAccount(request);
+  if (!account) return NextResponse.json({ error: "Open an account first" }, { status: 401 });
+  const [row] = await db()
+    .select()
+    .from(schema.pendingPayments)
+    .where(and(eq(schema.pendingPayments.accountId, account.id), eq(schema.pendingPayments.purpose, "fee")))
+    .orderBy(desc(schema.pendingPayments.id))
+    .limit(1);
+  if (!row) {
+    return NextResponse.json({ payment: null, fee_status: account.feeStatus });
+  }
+  if (row.status === "pending" || row.status === "verifying") {
+    const directory = dbFeeDirectory();
+    const current = await directory.findByCheckout(row.checkoutRequestId);
+    if (current) {
+      try {
+        await reconcileFeeRow(directory, current, Date.now(), (id) => stkQuery(id));
+      } catch {
+        // Leave the row as it is. An unreachable provider is not a payment.
+      }
+    }
+  }
+  const [fresh] = await db().select().from(schema.pendingPayments).where(eq(schema.pendingPayments.id, row.id));
+  const [updated] = await db().select().from(schema.accounts).where(eq(schema.accounts.id, account.id));
+  return NextResponse.json({
+    fee_status: updated?.feeStatus ?? account.feeStatus,
+    payment: fresh
+      ? {
+          status: fresh.status,
+          amount_kes: fresh.amountKes,
+          phone: fresh.phone,
+          checkout_request_id: fresh.checkoutRequestId,
+          reason: fresh.resultDescription,
+          created_at: fresh.createdAt,
+        }
+      : null,
   });
 }

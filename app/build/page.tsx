@@ -45,7 +45,7 @@ const STEP_LABEL: Record<string, string> = {
 };
 
 export default function BuildPage() {
-  const { toast, busy, showToast, act } = useProject();
+  const { toast, busy, showToast, act } = useProject({ projectId: null });
   const { session } = useSession();
   const { open } = useRecord();
   const [builds, setBuilds] = useState<Build[] | null>(null);

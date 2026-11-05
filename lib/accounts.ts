@@ -1,7 +1,7 @@
 import { eq } from "drizzle-orm";
 import type { Address } from "viem";
 
-import { currentSender } from "./auth";
+import { currentSender, type SenderSession } from "./auth";
 import { managedAccount, normaliseMsisdn } from "./chain";
 import { db, schema } from "./db";
 import { normaliseEmail } from "./email";
@@ -30,30 +30,27 @@ export function listingFeeKes(): number {
 export const feeRequired = (a: Account): boolean =>
   FEE_ROLES.includes(a.role as Role) && a.feeStatus !== "paid";
 
+/**
+ * Email is the login. A saved M-Pesa number never selects an account, and
+ * an email that was only typed as contact detail does not either. A legacy
+ * cookie whose subject is the phone still opens the account created on that
+ * phone, because that cookie was issued after a code to the handset.
+ */
+export function sessionOwnsAccount(session: SenderSession, account: Account): boolean {
+  if (account.subject === session.subject) return true;
+  if (session.email && account.email === session.email && account.emailVerified) return true;
+  return false;
+}
+
 /** The account behind the request's session, or null if there is none. */
 export async function currentAccount(request: Request): Promise<Account | null> {
   const session = currentSender(request);
   if (!session) return null;
   const direct = await accountBySubject(session.subject);
-  if (direct) return direct;
-  // An email account that added a number can sign in with that number: the
-  // session just proved the handset, which is what the fee would have
-  // proved, so the number is marked proven here too.
-  if (session.phone) {
-    const byPhone = await accountByPhone(session.phone);
-    if (byPhone) {
-      if (!byPhone.phoneVerified) {
-        const [row] = await db().update(schema.accounts).set({ phoneVerified: true }).where(eq(schema.accounts.id, byPhone.id)).returning();
-        return row ?? byPhone;
-      }
-      return byPhone;
-    }
-  }
-  // A phone account that confirmed an email can sign in with it. Only a
-  // proven email counts: one given as contact detail was never checked.
+  if (direct && sessionOwnsAccount(session, direct)) return direct;
   if (session.email) {
     const byEmail = await accountByEmail(session.email);
-    if (byEmail?.emailVerified) return byEmail;
+    if (byEmail && sessionOwnsAccount(session, byEmail)) return byEmail;
   }
   return null;
 }
@@ -95,11 +92,22 @@ export function accountAddress(subject: string): Address {
  * The M-Pesa number a request can pay from: the session's own number, or
  * the number the account added. Null means they have to add one first.
  */
+/**
+ * Where an M-Pesa prompt may be sent. An email session uses the number
+ * saved on its own account. A legacy phone session uses the number it
+ * proved. A number typed on a different account is never used.
+ */
+export function paymentDestination(session: SenderSession, account: Account | null): string | null {
+  const saved = account?.phone ? normaliseMsisdn(account.phone) : null;
+  const legacy = session.phone && session.subject === session.phone ? normaliseMsisdn(session.phone) : null;
+  return saved ?? legacy;
+}
+
 export async function payerPhone(request: Request): Promise<{ phone: string; account: Account | null } | null> {
   const session = currentSender(request);
   if (!session) return null;
   const account = await currentAccount(request);
-  const phone = session.phone ?? account?.phone ?? null;
+  const phone = paymentDestination(session, account);
   return phone ? { phone, account } : null;
 }
 
@@ -128,6 +136,9 @@ export async function createAccount(input: NewAccount): Promise<Account> {
     .values({
       subject,
       email: byEmail ? subject : null,
+      // The sign-in code already proved an email subject. A phone subject
+      // proved the handset; an email added later still starts unverified.
+      emailVerified: byEmail,
       phone: byEmail ? null : subject,
       phoneVerified: !byEmail,
       role: input.role,
@@ -199,7 +210,11 @@ export async function ensureBuyerAccount(subject: string, displayName: string, e
   return email ? setAccountEmail(account, email, false) : account;
 }
 
-/** Attach the M-Pesa number an email account will pay from. Proven when the fee arrives from it. */
+/**
+ * Save the M-Pesa number prompts are sent to. This does not verify the
+ * handset and does not move the session onto another account that already
+ * has the number.
+ */
 export async function setAccountPhone(account: Account, phone: string): Promise<Account> {
   const normalised = normaliseMsisdn(phone);
   const clash = await accountByPhone(normalised);

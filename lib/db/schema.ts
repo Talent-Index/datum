@@ -221,6 +221,21 @@ export const activities = pgTable(
  * code sent to it; the row is deleted on success, and attempts are counted
  * so a code cannot be brute-forced in the minutes it is live.
  */
+/**
+ * Request and verify attempts for email codes, so the limit survives a
+ * new serverless instance. The code itself is never stored here.
+ */
+export const otpEvents = pgTable(
+  "otp_events",
+  {
+    id: serial("id").primaryKey(),
+    subject: text("subject").notNull(),
+    kind: text("kind").notNull(), // request | verify
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("otp_events_subject_created").on(table.subject, table.createdAt)],
+);
+
 export const otpCodes = pgTable(
   "otp_codes",
   {
@@ -288,7 +303,7 @@ export const pendingPayments = pgTable(
     buildRequestId: text("build_request_id"),
     phone: text("phone").notNull(),
     amountKes: integer("amount_kes").notNull(),
-    status: text("status").notNull().default("pending"), // pending | confirmed | failed
+    status: text("status").notNull().default("pending"), // pending | verifying | confirmed | failed | cancelled | timeout
     mpesaReceipt: text("mpesa_receipt"),
     resultDescription: text("result_description"),
     depositTxHash: text("deposit_tx_hash"),
@@ -297,6 +312,7 @@ export const pendingPayments = pgTable(
   },
   (table) => [
     uniqueIndex("pending_payments_checkout_request").on(table.checkoutRequestId),
+    uniqueIndex("pending_payments_receipt").on(table.mpesaReceipt),
   ],
 );
 
@@ -334,6 +350,44 @@ export const attestations = pgTable("attestations", {
   txHash: text("tx_hash"),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
+
+/**
+ * Optional record of an email sign-in. The login is the email. A phone
+ * column remains from earlier sessions and is not a reason to join two
+ * accounts. Rows are optional: a deployment that has not migrated yet
+ * still signs people in.
+ */
+export const identityLinks = pgTable(
+  "identity_links",
+  {
+    id: serial("id").primaryKey(),
+    phone: text("phone"),
+    email: text("email"),
+    googleSub: text("google_sub"),
+    accountId: integer("account_id"),
+    displayName: text("display_name"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("identity_links_phone").on(table.phone),
+    uniqueIndex("identity_links_email").on(table.email),
+    uniqueIndex("identity_links_google").on(table.googleSub),
+  ],
+);
+
+/** The last thing this person did on a build, so a return visit opens it. */
+export const identityTouches = pgTable(
+  "identity_touches",
+  {
+    id: serial("id").primaryKey(),
+    subject: text("subject").notNull(),
+    projectId: text("project_id").notNull(),
+    kind: text("kind").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("identity_touches_subject_project").on(table.subject, table.projectId)],
+);
 
 export const corroborations = pgTable("corroborations", {
   id: serial("id").primaryKey(),

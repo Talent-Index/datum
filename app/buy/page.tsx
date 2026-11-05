@@ -4,10 +4,11 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { IconCheck, IconChevron, Logo } from "@/lib/ui/chrome";
+import { ProjectCover } from "@/lib/ui/cover";
 import { compactKes, firstName, initials, kes, maskPhone, nextReleaseKes, previousCumulative, scheduledShare, shortHex } from "@/lib/ui/format";
 import { EXPLORER } from "@/lib/ui/nav";
 import { useRecord, type RecordDetail } from "@/lib/ui/record";
-import { asMsisdn, call, switchProject, useProject, useProjects, useSession, type Milestone, type ProjectState, type VerdictImage } from "@/lib/ui/project";
+import { asMsisdn, call, currentProjectId, selectProject, useProject, useProjects, useSession, type Milestone, type ProjectState, type VerdictImage } from "@/lib/ui/project";
 
 const CHECKS: Array<{ key: string; title: string; pass: string }> = [
   { key: "location", title: "Taken at the plot", pass: "Inside the geofence of the registered pin" },
@@ -20,19 +21,38 @@ const PRESETS = [50_000, 100_000, 250_000];
 
 type Tab = "home" | "pay" | "evidence";
 
+interface MineBuild {
+  id: string;
+  name: string;
+  developer_name: string;
+  tie: string;
+}
+
+interface PaymentRow {
+  amount_kes: number;
+  status: string;
+  purpose: string;
+  created_at: string;
+  result: string | null;
+  deposit_tx: string | null;
+}
+
 /**
- * The buyer's and sender's page: prove a number, commit, pay by M-Pesa,
- * and approve a milestone. Wallet addresses and transaction hashes stay in
- * the record drawer.
+ * The buyer's and sender's page: sign in by email, commit, pay by M-Pesa
+ * from the saved number, and approve a milestone. Wallet addresses and
+ * transaction hashes stay in the record drawer.
  */
 export default function Buy() {
-  const { state, loadError, toast, busy, showToast, act } = useProject();
+  const [projectId, setProjectId] = useState<string | null>(null);
+  const { state, loadError, toast, busy, showToast, act } = useProject({ projectId });
   const { session, refreshSession } = useSession();
-  const projects = useProjects();
+  const { projects } = useProjects();
   const { open } = useRecord();
   const [tab, setTab] = useState<Tab>("home");
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
+  const [mine, setMine] = useState<MineBuild[] | null>(null);
+  const [payments, setPayments] = useState<PaymentRow[]>([]);
   const [codeSent, setCodeSent] = useState(false);
   const [commitment, setCommitment] = useState("");
   const [name, setName] = useState("");
@@ -44,6 +64,52 @@ export default function Buy() {
   const [reason, setReason] = useState("");
   const [showReason, setShowReason] = useState(false);
   const [shot, setShot] = useState(0);
+
+  useEffect(() => {
+    setProjectId(currentProjectId());
+  }, []);
+
+  useEffect(() => {
+    if (!session?.sender || projectId) return;
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch("/api/me/builds", { cache: "no-store" });
+      if (!response.ok || cancelled) return;
+      const data = (await response.json()) as { projects: MineBuild[] };
+      if (cancelled) return;
+      setMine(data.projects);
+      const only = data.projects.length === 1 ? data.projects[0] : null;
+      if (only) {
+        selectProject(only.id);
+        setProjectId(only.id);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [session?.sender, projectId]);
+
+  useEffect(() => {
+    if (!session?.sender || !state?.project) return;
+    void fetch("/api/me/touch", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ projectId: state.project, kind: "visit" }),
+    });
+  }, [session?.sender, state?.project]);
+
+  useEffect(() => {
+    if (!session?.sender || !projectId) {
+      setPayments([]);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const response = await fetch(`/api/payments?project=${encodeURIComponent(projectId)}`, { cache: "no-store" });
+      if (!response.ok || cancelled) return;
+      const data = (await response.json()) as { payments: PaymentRow[] };
+      if (!cancelled) setPayments(data.payments);
+    })();
+    return () => { cancelled = true; };
+  }, [session?.sender, projectId, state?.total_deposited]);
 
   useEffect(() => {
     if (prefilled || !session?.account) return;
@@ -74,18 +140,18 @@ export default function Buy() {
 
   const sendCode = () =>
     act("otp", async () => {
-      const result = await call("/api/auth/otp", { phone: phone.trim() });
+      const result = await call("/api/auth/otp", { email: phone.trim() });
       setCodeSent(true);
-      showToast(String(result.message ?? "Code sent. Check your phone."));
+      showToast(String(result.message ?? "Check your email."));
     });
 
   const verifyCode = () =>
     act("verify", async () => {
-      await call("/api/auth/verify", { phone: phone.trim(), code: code.trim() });
+      await call("/api/auth/verify", { email: phone.trim(), code: code.trim() });
       setCode("");
       setCodeSent(false);
       await refreshSession();
-      showToast("Number verified. You can register and pay from here.");
+      showToast("Signed in. Your builds and the number you pay from are on this email.");
     });
 
   const signOut = () =>
@@ -156,17 +222,19 @@ export default function Buy() {
 
       <main id="main">
         {toast && <div className={`toast ${toast.err ? "err" : ""}`} style={{ margin: "8px 16px" }} role="status">{toast.text}</div>}
-        {loadError && <div className="toast err" style={{ margin: "8px 16px" }}>{loadError}</div>}
+        {loadError && !/more than one project/.test(loadError) && <div className="toast err" style={{ margin: "8px 16px" }}>{loadError}</div>}
 
-        {!session?.sender && (
+        {session === null && <p className="hint" style={{ margin: "16px" }}>Checking your sign-in…</p>}
+
+        {session && !session.sender && (
           <section className="box" style={{ marginTop: 12 }}>
-            <div className="bh"><h2>Prove your number</h2><span className="eyebrow">SMS code</span></div>
-            <p>Everything here is tied to the M-Pesa number you pay from. We send a six-digit code. No wallet, no password.</p>
-            <label htmlFor="phone">M-Pesa number</label>
-            <input id="phone" inputMode="tel" autoComplete="tel" placeholder="07XX XXX XXX" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
+            <div className="bh"><h2>Sign in</h2><span className="eyebrow">Code</span></div>
+            <p>Sign in with your email. A code signs you in for 30 days and brings back this account, the M-Pesa number saved on it, and the builds it has paid into. The number is where prompts are sent. It is not the login.</p>
+            <label htmlFor="phone">Email address</label>
+            <input id="phone" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
             {codeSent && (
               <>
-                <label htmlFor="code">Code from SMS</label>
+                <label htmlFor="code">Code from email</label>
                 <input id="code" inputMode="numeric" autoComplete="one-time-code" aria-label="One-time code" value={code} onChange={(e) => setCode(e.target.value)} />
               </>
             )}
@@ -174,30 +242,54 @@ export default function Buy() {
               {codeSent ? (
                 <>
                   <button type="button" onClick={verifyCode} disabled={busy !== null || code.length !== 6}>{busy === "verify" ? "Checking…" : "Verify"}</button>
-                  <button type="button" className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>Change number</button>
+                  <button type="button" className="ghost" onClick={() => setCodeSent(false)} disabled={busy !== null}>Change</button>
                 </>
               ) : (
                 <button type="button" onClick={sendCode} disabled={busy !== null || !phone.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
               )}
             </div>
-            <p className="hint">Codes expire after five minutes. Ask for another after a minute.</p>
+            <p className="hint">Codes expire after five minutes. Ask for another after a minute. A new account finishes on the account page, including the M-Pesa number, before any prompt is sent.</p>
           </section>
         )}
 
-        {session?.sender && tab === "home" && (
+        {session?.sender && !session.account && (
+          <section className="box" style={{ marginTop: 12 }}>
+            <div className="bh"><h2>Finish your account</h2></div>
+            <p>Save your name and the M-Pesa number you pay from. Nothing is sent to that number until you press a pay button.</p>
+            <Link className="btn btn-primary" href="/account">Continue</Link>
+          </section>
+        )}
+
+        {session?.sender && !projectId && (
+          <section className="box" style={{ marginTop: 12 }}>
+            <div className="bh"><h2>Your builds</h2></div>
+            {mine === null && <p>Looking up the builds on this sign-in…</p>}
+            {mine && mine.length === 0 && <p>Nothing is tied to this sign-in yet. Choose an open build, or start from the listings. Money you pay in stays in that build&apos;s escrow.</p>}
+            <div className="btns">
+              {(mine && mine.length > 0 ? mine : projects).map((item) => (
+                <button type="button" key={item.id} className="ghost" onClick={() => { selectProject(item.id); setProjectId(item.id); }}>
+                  {item.name}
+                </button>
+              ))}
+            </div>
+            <p className="hint"><Link href="/listings">See homes and plots</Link></p>
+          </section>
+        )}
+
+        {session?.sender && projectId && tab === "home" && (
           <>
             <div className="hello">
               <div className="greet">{greet ? `Habari, ${greet}` : "Habari"}</div>
               <h1>{state?.site ?? "Your build"}</h1>
               <button type="button" className="linkish" onClick={signOut}>Sign out</button>
-              {projects.length > 1 && (
-                <label htmlFor="project" style={{ marginTop: 10 }}>Build</label>
-              )}
-              {projects.length > 1 && (
-                <select id="project" value={state?.project ?? ""} onChange={(e) => switchProject(e.target.value)}>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-              )}
+              {(mine && mine.length > 1) || projects.length > 1 ? (
+                <>
+                  <label htmlFor="project" style={{ marginTop: 10 }}>Build</label>
+                  <select id="project" value={state?.project ?? projectId ?? ""} onChange={(e) => { selectProject(e.target.value); setProjectId(e.target.value); }}>
+                    {(mine && mine.length > 0 ? mine : projects).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  </select>
+                </>
+              ) : null}
             </div>
 
             <section className="proj" aria-label="Money in escrow">
@@ -205,8 +297,10 @@ export default function Buy() {
                 {activeShot?.thumbnail ? (
                   /* Evidence previews are data URLs from the verifier, not static files. */
                   // eslint-disable-next-line @next/next/no-img-element
-                  <img src={activeShot.thumbnail} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
-                ) : null}
+                  <img src={activeShot.thumbnail} alt="Latest site photograph" style={{ width: "100%", height: "100%", objectFit: "cover" }} />
+                ) : (
+                  <ProjectCover projectId={state?.project ?? projectId} alt="Illustration of a residential site. Not this build's evidence photograph." />
+                )}
                 <span className={`pill ${state?.status === "Stalled" ? "p-red" : "p-green"}`}>
                   <span className="dot" />
                   {state?.status === "Stalled" ? "Stalled" : state?.status === "Completed" ? "Complete" : state?.awaiting_sender ? "Your approval needed" : "In escrow"}
@@ -293,7 +387,7 @@ export default function Buy() {
           </>
         )}
 
-        {session?.sender && tab === "evidence" && (
+        {session?.sender && projectId && tab === "evidence" && (
           <Evidence
             state={state}
             current={current}
@@ -314,7 +408,7 @@ export default function Buy() {
           />
         )}
 
-        {session?.sender && tab === "pay" && (
+        {session?.sender && projectId && tab === "pay" && (
           <Pay
             state={state}
             me={me}
@@ -336,11 +430,12 @@ export default function Buy() {
             onRegister={register}
             onPay={payInstalment}
             onClose={() => setTab("home")}
+            payments={payments}
           />
         )}
       </main>
 
-      {session?.sender && (
+      {session?.sender && projectId && (
         <nav className="tabbar" aria-label="Build">
           <TabButton id="home" tab={tab} setTab={setTab} label="Home" icon={<HomeIcon />} />
           <TabButton id="pay" tab={tab} setTab={setTab} label="Pay in" icon={<PlusIcon />} />
@@ -462,7 +557,10 @@ function Evidence({
             // eslint-disable-next-line @next/next/no-img-element
             <img src={image.thumbnail} alt={image.filename} style={{ width: "100%", height: "100%", objectFit: "cover" }} />
           ) : (
-            <div className="gal-empty">{state?.last_verdict ? "This submission has no preview." : "No photographs for this stage yet."}</div>
+            <>
+              <ProjectCover projectId={state?.project} alt="Illustration of a residential site. Not this build's evidence photograph." />
+              <div className="gal-caption">{state?.last_verdict ? "This submission has no preview." : "No photographs for this stage yet. This picture is a stand-in, not evidence from the plot."}</div>
+            </>
           )}
           {images.length > 0 && (
             <div className="gal-meta">
@@ -572,7 +670,7 @@ function Signer({ initials: mark, tone, title, detail, status }: { initials: str
 }
 
 function Pay({
-  state, me, signedIn, amount, setAmount, custom, setCustom, name, setName, email, setEmail, commitment, setCommitment, busy, over, feeDue, needsNumber, onRegister, onPay, onClose,
+  state, me, signedIn, amount, setAmount, custom, setCustom, name, setName, email, setEmail, commitment, setCommitment, busy, over, feeDue, needsNumber, onRegister, onPay, onClose, payments,
 }: {
   state: ProjectState | null;
   me: { commitment: number | null; contributed: number; phone: string } | null;
@@ -594,6 +692,7 @@ function Pay({
   onRegister: () => void;
   onPay: () => void;
   onClose: () => void;
+  payments: PaymentRow[];
 }) {
   return (
     <section className="pay">
@@ -629,6 +728,18 @@ function Pay({
           <button type="button" onClick={onRegister} disabled={over || busy !== null || name.trim().length < 2 || !email.trim() || !Number.parseInt(commitment, 10)}>
             {busy === "register" ? "Registering…" : "Register my commitment"}
           </button>
+        </section>
+      )}
+      {payments.length > 0 && (
+        <section className="box">
+          <div className="bh"><h2>M-Pesa prompts</h2></div>
+          {payments.map((payment) => (
+            <div className="kv" key={`${payment.created_at}-${payment.amount_kes}`}>
+              <span>{kes(payment.amount_kes)} · {paymentLabel(payment.status)}</span>
+              <span>{new Date(payment.created_at).toLocaleDateString("en-KE", { day: "numeric", month: "short" })}</span>
+            </div>
+          ))}
+          <p className="hint">Waiting means the handset has not confirmed yet. Recorded means the shillings are in the escrow. A failed prompt moved nothing.</p>
         </section>
       )}
       {me && (
@@ -690,6 +801,12 @@ function recordFor(state: ProjectState, current: Milestone | null, traceAddress:
     traceHref: traceAddress ? `/trace/${traceAddress}` : null,
     explorerHref: `${EXPLORER}/address/${state.contract}`,
   };
+}
+
+function paymentLabel(status: string): string {
+  if (status === "confirmed") return "Recorded in escrow";
+  if (status === "failed") return "Not completed";
+  return "Waiting for M-Pesa";
 }
 
 function Cross() {
