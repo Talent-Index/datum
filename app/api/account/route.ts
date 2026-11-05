@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { and, desc, eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { currentSender } from "@/lib/auth";
 import { createAccount, currentAccount, ensureRegistered, publicAccount, friendlyError } from "@/lib/accounts";
+import { currentSender } from "@/lib/auth";
+import { googleSignInEnabled } from "@/lib/google-auth";
 import { db, schema } from "@/lib/db";
 import { SELF_SERVICE_ROLES } from "@/lib/registry";
 
@@ -13,7 +14,7 @@ import { SELF_SERVICE_ROLES } from "@/lib/registry";
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const session = currentSender(request);
-  if (!session) return NextResponse.json({ session: null, account: null });
+  if (!session) return NextResponse.json({ session: null, account: null, google: googleSignInEnabled() });
   let account = await currentAccount(request);
   const who = { subject: session.subject, phone: session.phone, email: session.email };
   if (!account) return NextResponse.json({ session: who, account: null });
@@ -58,6 +59,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     session: who,
+    google: googleSignInEnabled(),
     account: publicAccount(account),
     fee_payment: fee ?? null,
     kyc: kyc

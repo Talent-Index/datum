@@ -6,6 +6,7 @@ import { db, schema } from "@/lib/db";
 import { stkPush } from "@/lib/daraja";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { feeRequired, payerPhone } from "@/lib/accounts";
+import { rememberTouch } from "@/lib/identity";
 import { logActivity } from "@/lib/registry";
 
 const bodySchema = z.object({
@@ -59,6 +60,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     status: "pending",
   });
 
+  await rememberTouch(phone, project.id, "pay");
   await logActivity({
     accountId: account?.id ?? null,
     actorAddress: (account?.address as `0x${string}` | undefined) ?? buyerAccount(phone).address,

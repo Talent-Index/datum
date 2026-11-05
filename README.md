@@ -224,13 +224,19 @@ There are two kinds of session. Both are HMAC-signed cookies under `SESSION_SECR
 
 A buyer or sender proves their M-Pesa number with a six-digit code: `/api/auth/otp` sends it and `/api/auth/verify` checks it. Codes live five minutes, allow five attempts, and are issued at most once a minute per number. Registering, paying and approving a milestone then act for that number only; no request body carries a phone.
 
-Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are set. Without them the code is written to the server log, which is enough for a demo.
+Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are set (`AT_SENDER_ID` is optional). Without them the code is written to the server log, which is the stub for a pilot that has not switched SMS on. The API never returns the code, and it never tells the person to type a fixed demo code.
 
-An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorization: Bearer` on the API or through `/api/auth/operator` for a cookie. Submitting evidence, countersigning, stalling, refunding, creating a project and replaying payments all require it.
+Email uses the same six-digit code through Resend (`RESEND_API_KEY`, `EMAIL_FROM`). Google sign-in is Auth.js: set `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` and `AUTH_SECRET` (the last can match `SESSION_SECRET`) and add `{origin}/api/auth/callback/google` in the Google console. The button stays hidden until those are set. A Google email that is already on an account with a phone signs in as that phone, so the wallet does not move.
 
-Reads are open: `/api/state`, `/api/projects`, `/api/listings`, `/api/trustees`, `/api/health` and `/api/activities?address=`.
+The cookie lasts 30 days. Builds already tied to the phone (as buyer or sender) and builds the person has opened come back on the next visit. That memory is in `identity_links` and `identity_touches`, added by `npm run db:migrate`. Sign-in still works before the migration; the visit is simply not stored.
 
-Delivering codes needs a provider: Resend for email (`RESEND_API_KEY`, `EMAIL_FROM`) and Africa's Talking for SMS (`AT_USERNAME`, `AT_API_KEY`). Without one the code goes to the server log. For a demonstration with neither, `OTP_TEST_CODE` sets a fixed six-digit code that is accepted on any channel with no provider; it is a deliberate back door for demos and must be unset before anything real runs on the deployment.
+`npm run seed` prints the projects already in Postgres. It does not insert balances. An empty database gets its first escrow from the register, as an operator, which deploys the contract. `/api/board` then lists every build without `?project=`.
+
+An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorization: Bearer` on the API or through `/api/auth/operator` for a cookie. Submitting evidence, countersigning, stalling, refunding, creating a project and replaying payments all require it. The register itself stays readable.
+
+Reads are open: `/api/state`, `/api/board`, `/api/projects`, `/api/listings`, `/api/trustees`, `/api/health` and `/api/activities?address=`.
+
+`OTP_TEST_CODE`, if set, is still accepted on a channel with no provider. It is a back door for a scripted demo and must stay unset on the pilot. The UI does not mention it.
 
 ## Accounts, roles and the registry
 

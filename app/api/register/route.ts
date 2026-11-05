@@ -6,6 +6,7 @@ import { buyerAccount } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
 import { ensureBuyerAccount, feeRequired, friendlyError, payerPhone } from "@/lib/accounts";
+import { rememberTouch } from "@/lib/identity";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -87,6 +88,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
+  await rememberTouch(phone, project.id, "commit");
   await logActivity({
     accountId: account?.id ?? null,
     actorAddress: (existing[0]?.walletAddress ?? address) as `0x${string}`,

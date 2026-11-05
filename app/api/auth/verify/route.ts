@@ -6,6 +6,7 @@ import { hashOtp, issueSenderToken, otpTestCodeAccepted, setSenderCookie } from 
 import { normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { normaliseEmail } from "@/lib/email";
+import { rememberIdentity } from "@/lib/identity";
 
 const bodySchema = z
   .object({
@@ -30,7 +31,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   if (otpTestCodeAccepted(parsed.data.phone ? "phone" : "email", parsed.data.code)) {
     if (row) await database.delete(schema.otpCodes).where(eq(schema.otpCodes.id, row.id));
-    const response = NextResponse.json({ ok: true, subject, demo: true });
+    await rememberIdentity(parsed.data.phone ? { phone: subject } : { email: subject });
+    const response = NextResponse.json({ ok: true, subject });
     setSenderCookie(response, issueSenderToken(parsed.data.phone ? { phone: subject } : { email: subject }));
     return response;
   }
@@ -54,6 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   await database.delete(schema.otpCodes).where(eq(schema.otpCodes.id, row.id));
+  await rememberIdentity(parsed.data.phone ? { phone: subject } : { email: subject });
   const response = NextResponse.json({ ok: true, subject });
   setSenderCookie(response, issueSenderToken(parsed.data.phone ? { phone: subject } : { email: subject }));
   return response;

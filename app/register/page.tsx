@@ -3,12 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 
 import { Logo } from "@/lib/ui/chrome";
+import { ProjectCover } from "@/lib/ui/cover";
 import { kes, nextReleaseKes, quietDays, shortHex, stallLimitDays } from "@/lib/ui/format";
 import { EXPLORER } from "@/lib/ui/nav";
 import { useRecord } from "@/lib/ui/record";
 import { ActivityFeed, BuildRequestsPanel, ReviewPanels } from "@/lib/ui/review";
 import {
   call,
+  currentProjectId,
   switchProject,
   useProject,
   useProjects,
@@ -46,11 +48,13 @@ interface BoardRow {
 }
 
 export default function Console() {
-  const { state, loadError, toast, busy, showToast, act } = useProject();
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const { state, loadError, toast, busy, showToast, act } = useProject({ projectId: selectedId });
   const { session, refreshSession } = useSession();
-  const projects = useProjects();
+  const { projects, loaded: projectsLoaded } = useProjects();
   const { open } = useRecord();
   const [rows, setRows] = useState<BoardRow[]>([]);
+  const [settled, setSettled] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const [queue, setQueue] = useState<number | null>(null);
@@ -67,23 +71,44 @@ export default function Console() {
   const developerChoice = developer || state?.developer_name || "";
 
   useEffect(() => {
+    setSelectedId(currentProjectId());
+  }, []);
+
+  useEffect(() => {
+    if (!projectsLoaded) return;
+    setRows((prev) => projects.map((summary) => prev.find((row) => row.summary.id === summary.id) ?? { summary, state: null }));
+    if (projects.length === 0) {
+      setSettled(true);
+      return;
+    }
     let cancelled = false;
     void (async () => {
-      const loaded = await Promise.all(
-        projects.map(async (summary) => {
+      try {
+        const response = await fetch("/api/board", { cache: "no-store" });
+        if (!response.ok) throw new Error("board");
+        const data = (await response.json()) as { projects: Array<{ id: string; state: ProjectState | null }> };
+        if (cancelled) return;
+        setRows(projects.map((summary) => {
+          const hit = data.projects.find((row) => row.id === summary.id);
+          return { summary, state: hit?.state ?? null };
+        }));
+      } catch {
+        const loaded = await Promise.all(projects.map(async (summary) => {
           try {
             const response = await fetch(`/api/state?project=${encodeURIComponent(summary.id)}`, { cache: "no-store" });
-            if (!response.ok) return { summary, state: null };
+            if (!response.ok) return { summary, state: null as ProjectState | null };
             return { summary, state: (await response.json()) as ProjectState };
           } catch {
-            return { summary, state: null };
+            return { summary, state: null as ProjectState | null };
           }
-        }),
-      );
-      if (!cancelled) setRows(loaded);
+        }));
+        if (!cancelled) setRows(loaded);
+      } finally {
+        if (!cancelled) setSettled(true);
+      }
     })();
     return () => { cancelled = true; };
-  }, [projects, state?.total_deposited, state?.total_released, state?.status, state?.next_milestone]);
+  }, [projects, projectsLoaded, state?.total_deposited, state?.total_released, state?.status, state?.next_milestone]);
 
   useEffect(() => {
     if (!operator) { setQueue(null); return; }
@@ -98,11 +123,17 @@ export default function Console() {
     })();
   }, [operator, toast]);
 
+  const needBuild = () => {
+    if (state?.project || currentProjectId()) return true;
+    showToast("Open a build from the table first. These actions apply to that build only.", true);
+    return false;
+  };
   const signIn = () => act("login", async () => { await call("/api/auth/operator", { secret }); setSecret(""); await refreshSession(); showToast("Operator controls unlocked."); });
   const signOut = () => act("logout", async () => { await call("/api/auth/logout"); await refreshSession(); });
 
   const submitEvidence = () =>
     act("evidence", async () => {
+      if (!needBuild()) return;
       const files = filesRef.current?.files;
       if (!files?.length) { showToast("Attach the site photographs first.", true); return; }
       const form = new FormData();
@@ -114,15 +145,17 @@ export default function Console() {
 
   const corroborateNow = () =>
     act("corr", async () => {
+      if (!needBuild()) return;
       const result = await call("/api/corroborate", { developer: developerChoice });
       const verdict = String(result.verdict);
       showToast(verdict === "do not proceed" ? "Public records say do not proceed." : `Public record check: ${verdict}.`, verdict === "do not proceed");
     });
 
-  const attest = (role: 1 | 2) => act(`attest${role}`, async () => { await call("/api/attest", { role }); showToast(role === 1 ? "Surveyor signed." : "Platform signed."); });
-  const stall = () => act("stall", async () => { await call("/api/stall"); showToast("Project stalled. Remaining funds are locked for refund."); });
+  const attest = (role: 1 | 2) => act(`attest${role}`, async () => { if (!needBuild()) return; await call("/api/attest", { role }); showToast(role === 1 ? "Surveyor signed." : "Platform signed."); });
+  const stall = () => act("stall", async () => { if (!needBuild()) return; await call("/api/stall"); showToast("Project stalled. Remaining funds are locked for refund."); });
   const refund = () =>
     act("refund", async () => {
+      if (!needBuild()) return;
       const result = (await call("/api/refund")) as unknown as { refunds: Array<{ phone: string; refund: number }> };
       showToast(result.refunds.length ? "Refunded: " + result.refunds.map((r) => `${r.phone} ${kes(r.refund)}`).join(" · ") : "Nothing to refund.");
     });
@@ -190,6 +223,7 @@ export default function Console() {
           <div>
             <div className="eyebrow">Drawdown register</div>
             <h1>Builds in escrow</h1>
+            <p className="ops-lede">Every live build is listed here. The shillings below are read from each escrow contract on Avalanche Fuji. A stage is paid when two of three have signed: the photo check, the surveyor or the sender, and Datum.</p>
           </div>
           <div className="ops-tools">
             <label className="search">
@@ -202,10 +236,10 @@ export default function Console() {
         </div>
 
         {toast && <div className={`toast ${toast.err ? "err" : ""}`} role="status" style={{ marginTop: 14 }}>{toast.text}</div>}
-        {loadError && <div className="toast err">{loadError}</div>}
+        {loadError && !/more than one project/.test(loadError) && <div className="toast err">{loadError}</div>}
 
         <section className="kpis" aria-label="Totals">
-          <div className="kpi"><small>Builds live</small><b className="num">{projects.length}</b><span>{known.length} readable</span></div>
+          <div className="kpi"><small>Builds live</small><b className="num">{projects.length}</b><span>{settled ? `${known.length} readable` : "Reading balances…"}</span></div>
           <div className="kpi"><small>KES protected</small><b className="num">{held.toLocaleString("en-US")}</b><span>Sum of escrow balances</span></div>
           <div className="kpi"><small>Released to date</small><b className="num">{released.toLocaleString("en-US")}</b><span>{stagesPaid} stage{stagesPaid === 1 ? "" : "s"}</span></div>
           <div className="kpi"><small>Latest photos rejected</small><b className="num">{withVerdict ? rejected : "—"}</b><span>{withVerdict ? `of ${withVerdict} latest submissions` : "No submission yet"}</span></div>
@@ -235,14 +269,19 @@ export default function Console() {
                   </tr>
                 </thead>
                 <tbody>
-                  {visible.length === 0 && <tr><td colSpan={7} className="empty">No builds match.</td></tr>}
+                  {visible.length === 0 && <tr><td colSpan={7} className="empty">{!projectsLoaded || !settled ? "Reading the builds…" : "No builds match."}</td></tr>}
                   {visible.map((row) => {
                     const s = row.state;
                     const cur = s?.milestones.find((m) => m.current) ?? null;
-                    const status = s ? statusOf(s) : { label: "Unread", tone: "p-grey" };
+                    const status = s ? statusOf(s) : { label: settled ? "Unread" : "Reading…", tone: "p-grey" };
                     return (
                       <tr key={row.summary.id} className="pick" tabIndex={0} aria-selected={state?.project === row.summary.id} onClick={() => switchProject(row.summary.id)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); switchProject(row.summary.id); } }}>
-                        <td><b>{row.summary.name}</b><small>{row.summary.developer_name}</small><small>{row.summary.id}</small></td>
+                        <td>
+                          <div className="build-id">
+                            <span className="build-shot"><ProjectCover projectId={row.summary.id} alt="" sizes="44px" /></span>
+                            <span><b>{row.summary.name}</b><small>{row.summary.developer_name}</small><small>{row.summary.id}</small></span>
+                          </div>
+                        </td>
                         <td>{cur?.description ?? (s?.status === "Completed" ? "Complete" : "—")}<small>{cur && s ? kes(nextReleaseKes(s)) : ""}</small></td>
                         <td><Checks verdict={s?.last_verdict ?? null} /></td>
                         <td><span className={`pill ${secondStatus(s).tone}`}>{secondStatus(s).label}</span></td>

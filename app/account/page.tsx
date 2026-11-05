@@ -39,6 +39,7 @@ interface AccountView {
   listings: Array<{ id: string; kind: string; title: string; status: string; price_kes: number; project_id: string | null; note: string | null; tx: string | null }>;
   commitments: Array<{ project_id: string; commitment: number | null; wallet: string; name: string }>;
   trustee_of: Array<{ id: string; name: string }>;
+  google?: boolean;
 }
 
 const ROLE_COPY: Record<string, string> = {
@@ -72,7 +73,7 @@ const STATUS_LABEL: Record<string, string> = {
 };
 
 export default function AccountPage() {
-  const { toast, busy, showToast, act } = useProject();
+  const { toast, busy, showToast, act } = useProject({ projectId: null });
   const [view, setView] = useState<AccountView | null>(null);
   const [wanted, setWanted] = useState<string | null>(null);
   const [method, setMethod] = useState<"email" | "phone">("phone");
@@ -192,7 +193,9 @@ export default function AccountPage() {
               <div className="btns" style={{ marginBottom: 12 }}>
                 <button className={method === "email" ? "" : "ghost"} onClick={() => { setMethod("email"); setCodeSent(false); }} disabled={busy !== null}>Email</button>
                 <button className={method === "phone" ? "" : "ghost"} onClick={() => { setMethod("phone"); setCodeSent(false); }} disabled={busy !== null}>M-Pesa number</button>
+                {view?.google ? <a className="btn ghost" href="/api/auth/google/start">Continue with Google</a> : null}
               </div>
+              <p className="hint">A code signs you in for 30 days. If this number or email is already on a build, you come back to it. Google uses the same sign-in once it is linked to your email.</p>
               <div className="row">
                 <div>
                   <label htmlFor="identity">{method === "email" ? "Email address" : "M-Pesa number"}</label>

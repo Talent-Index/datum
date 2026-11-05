@@ -13,6 +13,7 @@ import { currentSender } from "@/lib/auth";
 import { currentAccount } from "@/lib/accounts";
 import { db, schema } from "@/lib/db";
 import { missingProjectMessage, resolveProject } from "@/lib/project";
+import { rememberTouch } from "@/lib/identity";
 import { logActivity } from "@/lib/registry";
 
 /**
@@ -153,6 +154,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     verdict: null,
     txHash,
   });
+  await rememberTouch(session.phone ?? session.email, project.id, "approve");
   await logActivity({
     accountId: account?.id ?? null,
     actorAddress: senderWallet(account?.subject ?? session.subject).account.address,

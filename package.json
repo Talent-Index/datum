@@ -11,12 +11,14 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "warm": "tsx lib/data/warm.ts",
+    "seed": "tsx scripts/seed.ts",
     "artifacts": "forge build --root contracts && node scripts/artifacts.mjs"
   },
   "dependencies": {
     "drizzle-orm": "^0.44.0",
     "exifr": "^7.1.3",
     "next": "^15.4.0",
+    "next-auth": "^5.0.0-beta.32",
     "pg": "^8.13.0",
     "piexif-ts": "^2.0.1",
     "react": "^19.0.0",

@@ -335,6 +335,44 @@ export const attestations = pgTable("attestations", {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
+/**
+ * One person can arrive by phone, by email, or by Google. The phone is the
+ * durable key when it is present, because M-Pesa and the managed wallet
+ * follow the number. Rows are optional: a deployment that has not migrated
+ * yet still signs people in.
+ */
+export const identityLinks = pgTable(
+  "identity_links",
+  {
+    id: serial("id").primaryKey(),
+    phone: text("phone"),
+    email: text("email"),
+    googleSub: text("google_sub"),
+    accountId: integer("account_id"),
+    displayName: text("display_name"),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("identity_links_phone").on(table.phone),
+    uniqueIndex("identity_links_email").on(table.email),
+    uniqueIndex("identity_links_google").on(table.googleSub),
+  ],
+);
+
+/** The last thing this person did on a build, so a return visit opens it. */
+export const identityTouches = pgTable(
+  "identity_touches",
+  {
+    id: serial("id").primaryKey(),
+    subject: text("subject").notNull(),
+    projectId: text("project_id").notNull(),
+    kind: text("kind").notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("identity_touches_subject_project").on(table.subject, table.projectId)],
+);
+
 export const corroborations = pgTable("corroborations", {
   id: serial("id").primaryKey(),
   projectId: text("project_id")

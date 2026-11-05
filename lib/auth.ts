@@ -17,7 +17,7 @@ import type { NextResponse } from "next/server";
 
 const SENDER_COOKIE = "datum_sender";
 const OPERATOR_COOKIE = "datum_operator";
-const SESSION_DAYS = 7;
+const SESSION_DAYS = 30;
 
 function secret(): string {
   const value = process.env.SESSION_SECRET;
@@ -51,12 +51,16 @@ export interface SenderSession {
   expiresAt: number;
 }
 
-export function issueSenderToken(subject: { phone: string } | { email: string }): string {
+export function issueSenderToken(subject: { phone?: string | null; email?: string | null }): string {
+  const phone = subject.phone ?? null;
+  const email = subject.email ?? null;
+  const subjectKey = phone ?? email;
+  if (!subjectKey) throw new Error("A session needs a phone number or an email address");
   const now = Date.now();
   const session: SenderSession = {
-    subject: "phone" in subject ? subject.phone : subject.email,
-    phone: "phone" in subject ? subject.phone : null,
-    email: "email" in subject ? subject.email : null,
+    subject: subjectKey,
+    phone,
+    email,
     issuedAt: now,
     expiresAt: now + SESSION_DAYS * 24 * 60 * 60 * 1000,
   };

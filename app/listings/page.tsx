@@ -1,9 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import { AppFooter, AppHeader } from "@/lib/ui/chrome";
+import { ProjectCover } from "@/lib/ui/cover";
 import { kes } from "@/lib/ui/project";
 import { RecordAddress, RecordTx } from "@/lib/ui/record";
 
@@ -64,10 +66,13 @@ export default function Listings() {
               <span>{l.title}</span>
               <span>{KIND_LABEL[l.kind] ?? l.kind}</span>
             </h2>
-            {l.images > 0 && (
-              /* eslint-disable-next-line @next/next/no-img-element */
-              <img className="cover" src={`/api/listings/${l.id}/image/0`} alt={l.title} />
-            )}
+            <div className="cover-frame">
+              {l.images > 0 ? (
+                <Image src={`/api/listings/${l.id}/image/0`} alt={l.title} fill sizes="(max-width: 900px) 100vw, 480px" />
+              ) : (
+                <ProjectCover projectId={l.project_id} alt={`${l.title}. Illustration, not a photograph of this listing.`} />
+              )}
+            </div>
             <div className="body">
               <div className="price">{kes(l.price_kes)}</div>
               <p>{l.description}</p>

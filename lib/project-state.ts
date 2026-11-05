@@ -1,0 +1,138 @@
+import { and, desc, eq } from "drizzle-orm";
+import { toHex } from "viem";
+
+import { KES_UNITS, escrowAbi, kesAbi, publicClient } from "./chain";
+import { db, schema } from "./db";
+import { isRemittance, roleNames, type Project } from "./project";
+
+/**
+ * One project's escrow, read from Fuji and from the rows that must not go
+ * on chain (phones, verdicts). Shared by /api/state and the register board
+ * so a list of builds does not depend on ?project=.
+ */
+export async function readProjectState(project: Project) {
+  const ROLE_NAMES = roleNames(project);
+  const chain = publicClient();
+  const escrow = { address: project.contractAddress, abi: escrowAbi } as const;
+
+  const [totalDeposited, totalReleased, held, nextMilestone, statusCode, developerBalance, lastProgressAt, stallAfter] =
+    await Promise.all([
+      chain.readContract({ ...escrow, functionName: "totalDeposited" }),
+      chain.readContract({ ...escrow, functionName: "totalReleased" }),
+      chain.readContract({ ...escrow, functionName: "heldBalance" }),
+      chain.readContract({ ...escrow, functionName: "nextMilestone" }),
+      chain.readContract({ ...escrow, functionName: "status" }),
+      chain.readContract({
+        address: project.kesAddress,
+        abi: kesAbi,
+        functionName: "balanceOf",
+        args: [project.developerAddress],
+      }),
+      chain.readContract({ ...escrow, functionName: "lastProgressAt" }),
+      chain.readContract({ ...escrow, functionName: "stallAfter" }),
+    ]);
+  const status = (["Active", "Stalled", "Completed"] as const)[Number(statusCode)] ?? "Active";
+  const next = Number(nextMilestone);
+
+  const zeroHash = toHex(new Uint8Array(32));
+  const milestones = await Promise.all(
+    project.milestones.map(async (definition, id) => {
+      const [description, percent, cumulative, evidenceHash, approvals, released] = await chain.readContract({
+        ...escrow,
+        functionName: "milestones",
+        args: [BigInt(id)],
+      });
+      const signers: string[] = [];
+      for (const role of [0, 1, 2]) {
+        const attested = await chain.readContract({
+          ...escrow,
+          functionName: "hasAttested",
+          args: [BigInt(id), role],
+        });
+        if (attested) signers.push(ROLE_NAMES[role]!);
+      }
+      return {
+        id,
+        description,
+        stage: definition.stage,
+        percent,
+        cumulative,
+        evidence_hash: evidenceHash === zeroHash ? null : evidenceHash,
+        approvals,
+        released,
+        signers,
+        current: id === next && status === "Active",
+      };
+    }),
+  );
+
+  const buyerRows = await db().select().from(schema.buyers).where(eq(schema.buyers.projectId, project.id));
+  const buyers = (
+    await Promise.all(
+      buyerRows.map(async (buyer) => {
+        const [contributed, released, stillHeld] = await chain.readContract({
+          ...escrow,
+          functionName: "buyerPosition",
+          args: [buyer.walletAddress as `0x${string}`],
+        });
+        if (contributed === 0n && !buyer.commitmentKes) return null;
+        const refunded = await chain.readContract({
+          ...escrow,
+          functionName: "refunded",
+          args: [buyer.walletAddress as `0x${string}`],
+        });
+        return {
+          phone: buyer.phone,
+          address: buyer.walletAddress,
+          contributed: Number(contributed / KES_UNITS),
+          released: Number(released / KES_UNITS),
+          still_held: Number(stillHeld / KES_UNITS),
+          commitment: buyer.commitmentKes ?? null,
+          refunded,
+        };
+      }),
+    )
+  ).filter((b) => b !== null);
+
+  const lastOracle = await db()
+    .select({ verdict: schema.attestations.verdict })
+    .from(schema.attestations)
+    .where(and(eq(schema.attestations.projectId, project.id), eq(schema.attestations.role, 0)))
+    .orderBy(desc(schema.attestations.id))
+    .limit(1);
+  const lastCorroboration = await db()
+    .select({ result: schema.corroborations.result })
+    .from(schema.corroborations)
+    .where(eq(schema.corroborations.projectId, project.id))
+    .orderBy(desc(schema.corroborations.id))
+    .limit(1);
+
+  return {
+    project: project.id,
+    trustee_account_id: project.trusteeAccountId,
+    site: project.name,
+    status,
+    total_deposited: Number(totalDeposited / KES_UNITS),
+    total_released: Number(totalReleased / KES_UNITS),
+    held: Number(held / KES_UNITS),
+    developer_received: Number(developerBalance / KES_UNITS),
+    next_milestone: next,
+    milestones,
+    buyers,
+    last_verdict: lastOracle[0]?.verdict ?? null,
+    corroboration: lastCorroboration[0]?.result ?? null,
+    developer_name: project.developerName,
+    funding_target: project.fundingTargetKes ?? 0,
+    is_remittance: isRemittance(project),
+    sender_phone: project.senderPhone,
+    awaiting_sender:
+      isRemittance(project) &&
+      status === "Active" &&
+      (lastOracle[0]?.verdict as { accepted?: boolean } | null)?.accepted === true &&
+      milestones[next]?.approvals === 1 &&
+      !milestones[next]?.signers.includes("Sender"),
+    contract: project.contractAddress,
+    last_progress_at: new Date(Number(lastProgressAt) * 1000).toISOString(),
+    stall_after_seconds: Number(stallAfter),
+  };
+}

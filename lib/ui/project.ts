@@ -90,9 +90,10 @@ export interface ProjectSummary {
 }
 
 export interface Session {
-  sender: { phone: string; expiresAt: number } | null;
+  sender: { phone: string | null; email: string | null; expiresAt: number } | null;
   account: { id: number; role: string; display_name: string; address: string; kyc_status: string; phone: string | null; email: string | null; email_verified: boolean; fee_required: boolean } | null;
   operator: boolean;
+  google?: boolean;
 }
 
 export const kes = (n: number) => `KES ${n.toLocaleString("en-US")}`;
@@ -143,8 +144,13 @@ export interface ProjectHandle {
   refresh: () => Promise<void>;
 }
 
-/** Polls the project so a confirmed M-Pesa callback shows up on its own. */
-export function useProject(): ProjectHandle {
+/**
+ * Polls one project so a confirmed M-Pesa callback shows up on its own.
+ * Pass projectId null on pages that are not about a single build, so they
+ * do not call /api/state with no id when several projects exist.
+ */
+export function useProject(options?: { projectId?: string | null }): ProjectHandle {
+  const projectId = options?.projectId;
   const [state, setState] = useState<ProjectState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; err: boolean } | null>(null);
@@ -158,8 +164,13 @@ export function useProject(): ProjectHandle {
   }, []);
 
   const refresh = useCallback(async () => {
+    if (projectId === null) {
+      setLoadError(null);
+      return;
+    }
+    const path = projectId ? `/api/state?project=${encodeURIComponent(projectId)}` : api("/api/state");
     try {
-      const response = await fetch(api("/api/state"), { cache: "no-store" });
+      const response = await fetch(path, { cache: "no-store" });
       const data = (await response.json().catch(() => null)) as (ProjectState & { error?: string }) | null;
       if (!data) throw new Error("The register could not be read");
       if (!response.ok) throw new Error(data.error ?? "State unavailable");
@@ -168,13 +179,18 @@ export function useProject(): ProjectHandle {
     } catch (error) {
       setLoadError(error instanceof Error ? error.message : "State unavailable");
     }
-  }, []);
+  }, [projectId]);
 
   useEffect(() => {
+    if (projectId === null) {
+      setState(null);
+      setLoadError(null);
+      return;
+    }
     void refresh();
     const interval = setInterval(() => void refresh(), 5000);
     return () => clearInterval(interval);
-  }, [refresh]);
+  }, [refresh, projectId]);
 
   const act = useCallback(
     (name: string, fn: () => Promise<void>) => {
@@ -213,9 +229,10 @@ export function useSession(): { session: Session | null; refreshSession: () => P
   return { session, refreshSession };
 }
 
-/** Every project on the platform, for the picker. */
-export function useProjects(): ProjectSummary[] {
+/** Every project on the platform, for the picker. loaded is false until the first answer. */
+export function useProjects(): { projects: ProjectSummary[]; loaded: boolean } {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [loaded, setLoaded] = useState(false);
   useEffect(() => {
     void (async () => {
       try {
@@ -225,10 +242,19 @@ export function useProjects(): ProjectSummary[] {
         setProjects(data.projects);
       } catch {
         // The picker simply stays empty; the page still shows the default project.
+      } finally {
+        setLoaded(true);
       }
     })();
   }, []);
-  return projects;
+  return { projects, loaded };
+}
+
+/** Keep the address on this build without reloading, so later calls include ?project=. */
+export function selectProject(id: string): void {
+  const url = new URL(window.location.href);
+  url.searchParams.set("project", id);
+  window.history.replaceState(null, "", url.toString());
 }
 
 /** Change the project the page shows. A full navigation keeps every panel in step. */

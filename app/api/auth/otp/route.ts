@@ -6,6 +6,7 @@ import { generateOtp, hashOtp } from "@/lib/auth";
 import { normaliseMsisdn } from "@/lib/chain";
 import { db, schema } from "@/lib/db";
 import { normaliseEmail, sendEmail } from "@/lib/email";
+import { otpDeliveryMessage } from "@/lib/otp-message";
 import { sendSms } from "@/lib/sms";
 
 /**
@@ -67,10 +68,6 @@ export async function POST(request: Request): Promise<NextResponse> {
     ok: true,
     subject,
     delivered: sent.delivered,
-    message: sent.delivered
-      ? `Code sent to ${subject}.`
-      : process.env.OTP_TEST_CODE
-        ? `No ${parsed.data.phone ? "SMS" : "email"} provider is configured on this deployment; enter the demo code.`
-        : `No ${parsed.data.phone ? "SMS" : "email"} provider is configured; the code was written to the server log.`,
+    message: otpDeliveryMessage(parsed.data.phone ? "phone" : "email", sent.delivered),
   });
 }
