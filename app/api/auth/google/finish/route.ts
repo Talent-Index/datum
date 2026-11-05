@@ -5,8 +5,8 @@ import { auth } from "@/lib/google-auth";
 import { linkGoogleIdentity } from "@/lib/identity";
 
 /**
- * Google has proved the email. Issue the same Datum cookie the SMS and
- * email codes use, preferring the phone already linked to that email.
+ * Google has proved the email. The cookie is for that email. The M-Pesa
+ * number, if one is saved, stays a payment destination and is not the session.
  */
 export async function GET(request: Request): Promise<NextResponse> {
   const session = await auth();
@@ -18,7 +18,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     googleSub: session.googleSub ?? null,
     name: session.user?.name ?? null,
   });
-  const response = NextResponse.redirect(new URL(linked.phone ? "/buy" : "/account", origin));
-  setSenderCookie(response, issueSenderToken(linked.phone ? { phone: linked.phone, email: linked.email } : { email: linked.email }));
+  const response = NextResponse.redirect(new URL("/account", origin));
+  setSenderCookie(response, issueSenderToken({ email: linked.email }));
   return response;
 }

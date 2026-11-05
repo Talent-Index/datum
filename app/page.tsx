@@ -234,7 +234,7 @@ export default function Home() {
             <article className="step">
               <span className="n">01 — Fund</span>
               <h3>Pay in by M-Pesa</h3>
-              <p>An STK prompt goes to the number you proved. When Safaricom confirms, the amount is a claim in escrow for that build.</p>
+              <p>An STK prompt goes to the M-Pesa number saved on your account. When Safaricom confirms, the amount is a claim in escrow for that build.</p>
               <div className="demo"><div className="mini"><span>M-Pesa prompt</span><b>Your amount</b></div></div>
             </article>
             <article className="step">

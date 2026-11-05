@@ -35,7 +35,7 @@ interface AccountView {
     registry_tx: string | null;
     registered_on_chain: boolean;
   } | null;
-  fee_payment: { status: string; created_at: string; reason: string | null } | null;
+  fee_payment: { status: string; created_at: string; reason: string | null; amount_kes?: number; phone?: string } | null;
   listings: Array<{ id: string; kind: string; title: string; status: string; price_kes: number; project_id: string | null; note: string | null; tx: string | null }>;
   commitments: Array<{ project_id: string; commitment: number | null; wallet: string; name: string }>;
   trustee_of: Array<{ id: string; name: string }>;
@@ -51,7 +51,6 @@ const ROLE_COPY: Record<string, string> = {
   trustee: "You hold the second signature. You verify people, approve listings, and countersign milestones from the photographs.",
 };
 
-const EMAIL_ROLES = ["sender", "seller", "developer", "company"];
 const KIND_BY_ROLE: Record<string, string[]> = {
   seller: ["property_sale"],
   developer: ["build", "development"],
@@ -76,11 +75,10 @@ export default function AccountPage() {
   const { toast, busy, showToast, act } = useProject({ projectId: null });
   const [view, setView] = useState<AccountView | null>(null);
   const [wanted, setWanted] = useState<string | null>(null);
-  const [method, setMethod] = useState<"email" | "phone">("phone");
   const [identity, setIdentity] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
-  const [open, setOpen] = useState({ role: "buyer", displayName: "", companyName: "", registrationNumber: "" });
+  const [open, setOpen] = useState({ role: "buyer", displayName: "", companyName: "", registrationNumber: "", phone: "" });
   const [newPhone, setNewPhone] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [emailCode, setEmailCode] = useState("");
@@ -94,7 +92,6 @@ export default function AccountPage() {
     const role = new URLSearchParams(window.location.search).get("role");
     if (!role) return;
     setWanted(role);
-    if (EMAIL_ROLES.includes(role)) setMethod("email");
     if (["buyer", "sender", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
   }, []);
 
@@ -112,15 +109,13 @@ export default function AccountPage() {
   const session = view?.session ?? null;
   const kinds = account ? (KIND_BY_ROLE[account.role] ?? []) : [];
   const listingKind = listing.kind || kinds[0] || "";
-  const identityBody = () => (method === "email" ? { email: identity.trim() } : { phone: identity.trim() });
-
-  const sendCode = () => act("otp", async () => { const r = await call("/api/auth/otp", identityBody()); setCodeSent(true); showToast(String(r.message ?? "Code sent.")); });
-  const verifyCode = () => act("verify", async () => { await call("/api/auth/verify", { ...identityBody(), code: code.trim() }); setCode(""); setCodeSent(false); await load(); });
+  const sendCode = () => act("otp", async () => { const r = await call("/api/auth/otp", { email: identity.trim() }); setCodeSent(true); showToast(String(r.message ?? "Check your email.")); });
+  const verifyCode = () => act("verify", async () => { await call("/api/auth/verify", { email: identity.trim(), code: code.trim() }); setCode(""); setCodeSent(false); await load(); });
   const signOut = () => act("logout", async () => { await call("/api/auth/logout"); await load(); });
 
   const openAccount = () =>
     act("open", async () => {
-      const r = await call("/api/account", { ...open, companyName: open.companyName || undefined, registrationNumber: open.registrationNumber || undefined });
+      const r = await call("/api/account", { ...open, companyName: open.companyName || undefined, registrationNumber: open.registrationNumber || undefined, phone: open.phone.trim() });
       showToast(String(r.message));
       await load();
     });
@@ -158,7 +153,10 @@ export default function AccountPage() {
       await load();
     });
 
-  const feeState = account ? (account.fee_status === "paid" ? "paid" : view?.fee_payment?.status === "pending" || account.fee_status === "pending" ? "waiting" : "due") : "";
+  const paymentStatus = view?.fee_payment?.status ?? "";
+  const feeOpen = paymentStatus === "pending" || paymentStatus === "verifying";
+  const feeDone = !!account && (account.fee_status === "paid" || paymentStatus === "confirmed");
+  const feeState = !account ? "" : feeDone ? "paid" : feeOpen ? "waiting" : "due";
   const needsPhone = !!account && !account.phone;
   const canPost = !!account && !account.fee_required && !needsPhone;
   const identityLine = account ? (account.role === "trustee" ? "appointed by the platform" : account.kyc_status === "verified" ? "verified by Datum staff" : view?.listings.some((l) => l.status === "pending_review") ? "staff will reach out to you" : "after you post") : "";
@@ -170,7 +168,7 @@ export default function AccountPage() {
       <div className="page-intro">
         <h1>{account ? account.display_name : "Your account"}</h1>
         <p>
-          {account ? <>Role {account.role}. {identityLine}.</> : "Prove an email or an M-Pesa number, then open the account."}
+          {account ? <>Role {account.role}. {identityLine}.</> : "Sign in with your email. You add the M-Pesa number you pay from after the code checks out."}
           {session ? <> <button type="button" className="linkish" onClick={signOut}>Sign out</button></> : null}
         </p>
       </div>
@@ -186,25 +184,19 @@ export default function AccountPage() {
             </h2>
             <div className="body">
               {wanted === "trustee" ? (
-                <p>Trustees are appointed by the platform. Sign in with the number you were appointed on and your desk opens; if you have not been appointed, ask the operator.</p>
+                <p>Trustees are appointed by the platform. Sign in with the email on that appointment. If you have not been appointed, ask the operator.</p>
               ) : (
-                <p>Buyers sign in with the M-Pesa number they pay from. Sellers, developers, companies and anyone sending money from abroad sign in by email and add a number afterwards.</p>
+                <p>Use the same email each time. A code signs you in for 30 days. After that you save the M-Pesa number prompts should go to. The number is not a login, and typing it does not join you to someone else&apos;s account.</p>
               )}
-              <div className="btns" style={{ marginBottom: 12 }}>
-                <button className={method === "email" ? "" : "ghost"} onClick={() => { setMethod("email"); setCodeSent(false); }} disabled={busy !== null}>Email</button>
-                <button className={method === "phone" ? "" : "ghost"} onClick={() => { setMethod("phone"); setCodeSent(false); }} disabled={busy !== null}>M-Pesa number</button>
-                {view?.google ? <a className="btn ghost" href="/api/auth/google/start">Continue with Google</a> : null}
-              </div>
-              <p className="hint">A code signs you in for 30 days. If this number or email is already on a build, you come back to it. Google uses the same sign-in once it is linked to your email.</p>
               <div className="row">
                 <div>
-                  <label htmlFor="identity">{method === "email" ? "Email address" : "M-Pesa number"}</label>
-                  <input id="identity" type={method === "email" ? "email" : "tel"} placeholder={method === "email" ? "you@example.com" : "07XX XXX XXX"} value={identity} onChange={(e) => setIdentity(e.target.value)} disabled={codeSent} />
+                  <label htmlFor="identity">Email address</label>
+                  <input id="identity" type="email" autoComplete="email" placeholder="you@example.com" value={identity} onChange={(e) => setIdentity(e.target.value)} disabled={codeSent} />
                 </div>
                 {codeSent && (
                   <div>
-                    <label htmlFor="code">Code</label>
-                    <input id="code" inputMode="numeric" value={code} onChange={(e) => setCode(e.target.value)} />
+                    <label htmlFor="code">Code from email</label>
+                    <input id="code" inputMode="numeric" autoComplete="one-time-code" aria-label="One-time code" value={code} onChange={(e) => setCode(e.target.value)} />
                   </div>
                 )}
               </div>
@@ -236,7 +228,7 @@ export default function AccountPage() {
           <section className="panel">
             <h2><span>Open your account</span><span>{session.subject}</span></h2>
             <div className="body">
-              <p>Choose what you are here to do. The role is chosen once, and an Avalanche address is created for you the moment the account opens.</p>
+              <p>Choose what you are here to do, and the M-Pesa number prompts should use. Opening the account does not send a payment prompt. Sellers, developers, companies and senders then review the platform fee. Buyers are not charged it.</p>
               <label htmlFor="role">I am</label>
               <select id="role" value={open.role} onChange={(e) => setOpen((v) => ({ ...v, role: e.target.value }))}>
                 <option value="buyer">A buyer</option>
@@ -247,6 +239,8 @@ export default function AccountPage() {
               </select>
               <label htmlFor="name">{open.role === "company" ? "Contact person" : "Your name"}</label>
               <input id="name" value={open.displayName} onChange={(e) => setOpen((v) => ({ ...v, displayName: e.target.value }))} />
+              <label htmlFor="signup-phone">M-Pesa number prompts are sent to</label>
+              <input id="signup-phone" type="tel" autoComplete="tel" placeholder="07XX XXX XXX" value={open.phone} onChange={(e) => setOpen((v) => ({ ...v, phone: e.target.value }))} />
               {open.role === "company" && (
                 <div className="row">
                   <div>
@@ -259,8 +253,8 @@ export default function AccountPage() {
                   </div>
                 </div>
               )}
-              <button onClick={openAccount} disabled={busy !== null || open.displayName.trim().length < 2}>
-                {busy === "open" ? "Opening and registering on chain…" : "Open account"}
+              <button onClick={openAccount} disabled={busy !== null || open.displayName.trim().length < 2 || open.phone.trim().length < 10}>
+                {busy === "open" ? "Opening and registering on chain…" : "Save profile"}
               </button>
               <p className="hint">{ROLE_COPY[open.role]}</p>
             </div>
@@ -280,7 +274,7 @@ export default function AccountPage() {
                     <tr><td>Record</td><td className="n"><RecordAddress address={account.address} /></td></tr>
                     <tr><td>Registered on chain</td><td className="n">{account.registry_tx ? <RecordTx hash={account.registry_tx} label="Registration record" /> : account.registered_on_chain ? "yes" : <span className="held-c">pending</span>}</td></tr>
                     {account.email && <tr><td>Email</td><td className="n">{account.email} {account.email_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</td></tr>}
-                    <tr><td>M-Pesa number</td><td className="n">{account.phone ? <>{account.phone} {account.phone_verified ? <span className="sig">proven</span> : <span className="held-c">not yet proven</span>}</> : "—"}</td></tr>
+                    <tr><td>M-Pesa number</td><td className="n">{account.phone ? <>{account.phone} <span className="held-c">prompts only</span></> : "—"}</td></tr>
                     {(account.fee_required || account.fee_status === "paid") && <tr><td>Platform fee</td><td className="n">{feeState === "paid" ? <span className="sig">paid</span> : feeState === "waiting" ? <span className="held-c">waiting for M-Pesa</span> : kes(account.fee_kes) + " due"}</td></tr>}
                     <tr><td>Verification</td><td className="n">{identityLine}</td></tr>
                   </tbody>
@@ -326,7 +320,7 @@ export default function AccountPage() {
               <section className="panel decide">
                 <h2><span>1 — The number you pay from</span><span>M-Pesa</span></h2>
                 <div className="body">
-                  <p>The fee and every instalment are M-Pesa prompts to this number. It is proven the moment the fee arrives from it.</p>
+                  <p>Instalments and the platform fee, when one is due, are M-Pesa prompts to this number. Saving it does not prove you hold the handset.</p>
                   <label htmlFor="newphone">M-Pesa number</label>
                   <input id="newphone" type="tel" placeholder="07XX XXX XXX" value={newPhone} onChange={(e) => setNewPhone(e.target.value)} />
                   <button onClick={savePhone} disabled={busy !== null || !newPhone.trim()}>Save number</button>
@@ -336,21 +330,36 @@ export default function AccountPage() {
 
             {account.fee_required && !needsPhone && (
               <section className="panel decide">
-                <h2><span>{account.email ? "2 — " : ""}Platform fee</span><span>{kes(account.fee_kes)}</span></h2>
+                <h2><span>Platform fee</span><span>{kes(account.fee_kes)}</span></h2>
                 <div className="body">
                   <p>
-                    {account.role === "sender"
-                      ? "A one-off fee before you can commit to a build. It pays for the trustee who signs for the work."
-                      : "A one-off fee before you can post. It pays for the staff visit that verifies you and your listing."}
+                    This is the one-off platform fee for {account.role === "sender" ? "committing to a build" : "posting a listing"}. It pays for staff to check what you posted, or for a sender to take part. It is not a charge for creating an account, and it is not held in the construction escrow on Avalanche Fuji.
                   </p>
-                  {feeState === "waiting" ? (
-                    <p className="hint">Prompt sent to {account.phone}. Approve it on the handset; this page updates on its own once Safaricom confirms.</p>
-                  ) : null}
-                  {view?.fee_payment?.status === "failed" && <div className="toast err">The last prompt was not paid{view.fee_payment.reason ? `: ${view.fee_payment.reason}` : ""}. Try again.</div>}
-                  <button onClick={payFee} disabled={busy !== null}>{busy === "fee" ? "Sending prompt…" : feeState === "waiting" ? "Send the prompt again" : `Pay ${kes(account.fee_kes)} by M-Pesa`}</button>
+                  <p>The prompt goes to <b>{account.phone}</b> for <b>{kes(account.fee_kes)}</b>. Paying it does not prove you own that handset. Nothing is sent until you press the button.</p>
+                  {feeState === "waiting" ? <p className="hint" role="status">Waiting for M-Pesa. Approve or cancel the prompt on the handset. This page checks the result and does not send another prompt while one is open.</p> : null}
+                  {paymentStatus === "cancelled" && <div className="toast err" role="status">Cancelled on the handset. You can send the prompt again.</div>}
+                  {paymentStatus === "timeout" && <div className="toast err" role="status">The prompt timed out. You can send it again.</div>}
+                  {paymentStatus === "failed" && <div className="toast err" role="status">The prompt was not completed{view?.fee_payment?.reason ? `: ${view.fee_payment.reason}` : ""}. You can try again.</div>}
+                  <button onClick={payFee} disabled={busy !== null || feeOpen || feeDone}>{busy === "fee" ? "Sending prompt…" : feeOpen ? "Waiting for M-Pesa" : `Pay ${kes(account.fee_kes)} with M-Pesa`}</button>
                 </div>
               </section>
             )}
+            {account && !account.fee_required && account.role === "buyer" && account.phone ? (
+              <section className="panel">
+                <h2><span>No platform fee</span></h2>
+                <div className="body">
+                  <p>Buyers are not charged the KES {account.fee_kes} platform fee. That fee is for sellers, developers, companies and senders. Instalments for a build are separate prompts to {account.phone}, and those amounts are held in the escrow for that build.</p>
+                </div>
+              </section>
+            ) : null}
+            {feeDone && account.fee_status === "paid" ? (
+              <section className="panel">
+                <h2><span>Platform fee</span><span>Paid</span></h2>
+                <div className="body">
+                  <p>The platform fee is already paid on this email. It will not be charged again. Construction payments stay separate and are held in the Avalanche Fuji escrow for each build.</p>
+                </div>
+              </section>
+            ) : null}
 
             {kinds.length > 0 && (
               <section className="panel">
@@ -412,7 +421,7 @@ export default function AccountPage() {
               <section className="panel">
                 <h2><span>3 — Choose the build</span></h2>
                 <div className="body">
-                  <p>Fee paid and number proven. Pick the build from the listings, commit, and pay in instalments; the pay-in page shows every photograph before a trustee signs.</p>
+                  <p>The platform fee is paid. Pick the build from the listings, commit, and pay in instalments. Those amounts are held in that build&apos;s escrow.</p>
                   <Link className="btn" href="/listings">Browse listings</Link>
                 </div>
               </section>

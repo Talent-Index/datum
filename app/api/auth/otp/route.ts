@@ -1,73 +1,49 @@
 import { NextResponse } from "next/server";
-import { and, eq, gt } from "drizzle-orm";
 import { z } from "zod";
 
 import { generateOtp, hashOtp } from "@/lib/auth";
-import { normaliseMsisdn } from "@/lib/chain";
-import { db, schema } from "@/lib/db";
-import { normaliseEmail, sendEmail } from "@/lib/email";
-import { otpDeliveryMessage } from "@/lib/otp-message";
-import { sendSms } from "@/lib/sms";
+import { emailTransport, normaliseEmail, sendEmail } from "@/lib/email";
+import { issueEmailCode, publicOtpResponse } from "@/lib/onboarding/email-code";
+import { dbOtpDirectory } from "@/lib/onboarding/db";
+import { OTP_CLOSED } from "@/lib/otp-message";
 
 /**
- * Send a one-time code to a phone number or an email address. Typing it
- * back proves the handset or the inbox. Buyers use the number they pay
- * from; sellers, developers, companies and senders abroad use email and
- * add a number afterwards.
+ * Email is the only sign-in. A code is emailed when delivery is configured,
+ * and the response never contains the code or whether the address is new.
  */
-const bodySchema = z
-  .object({
-    phone: z.string().trim().regex(/^(?:\+?254|0)7\d{8}$/, "Enter a Safaricom number such as 0712345678").optional(),
-    email: z.string().trim().email("Enter a valid email address").optional(),
-  })
-  .refine((b) => !!b.phone !== !!b.email, { message: "Send either a phone number or an email address" });
-
-const CODE_MINUTES = 5;
-const RESEND_SECONDS = 60;
+const bodySchema = z.object({
+  email: z.string().trim().optional(),
+  phone: z.string().optional(),
+});
 
 export async function POST(request: Request): Promise<NextResponse> {
   const parsed = bodySchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return NextResponse.json({ error: parsed.error.issues[0]?.message }, { status: 400 });
-  }
-  const subject = parsed.data.phone ? normaliseMsisdn(parsed.data.phone) : normaliseEmail(parsed.data.email!);
-  const database = db();
-
-  // One live code per subject at a time; a resend inside the window is
-  // refused rather than stacking codes, which also throttles message spend.
-  const recent = await database
-    .select({ createdAt: schema.otpCodes.createdAt })
-    .from(schema.otpCodes)
-    .where(
-      and(
-        eq(schema.otpCodes.phone, subject),
-        gt(schema.otpCodes.createdAt, new Date(Date.now() - RESEND_SECONDS * 1000)),
-      ),
-    );
-  if (recent.length) {
+  if (!parsed.success || parsed.data.phone || !parsed.data.email) {
     return NextResponse.json(
-      { error: `A code was sent less than ${RESEND_SECONDS} seconds ago; wait before asking again` },
-      { status: 429 },
+      { error: "Sign in with your email address. Add the M-Pesa number afterwards; it is where prompts are sent, not how you sign in." },
+      { status: 400 },
     );
   }
-
-  const code = generateOtp();
-  await database.delete(schema.otpCodes).where(eq(schema.otpCodes.phone, subject));
-  await database.insert(schema.otpCodes).values({
-    phone: subject,
-    codeHash: hashOtp(subject, code),
-    expiresAt: new Date(Date.now() + CODE_MINUTES * 60 * 1000),
-  });
-
-  const text = `${code} is your Datum code. It expires in ${CODE_MINUTES} minutes.`;
-  const sent = parsed.data.phone
-    ? await sendSms(subject, text)
-    : await sendEmail(subject, "Your Datum sign-in code", text);
-
-  return NextResponse.json({
-    ok: true,
-    subject,
-    delivered: sent.delivered,
-    message: otpDeliveryMessage(parsed.data.phone ? "phone" : "email", sent.delivered),
-  });
+  const emailCheck = z.string().trim().email("Enter a valid email address").safeParse(parsed.data.email);
+  if (!emailCheck.success) return NextResponse.json({ error: emailCheck.error.issues[0]?.message }, { status: 400 });
+  if (emailTransport() === "closed") {
+    return NextResponse.json({ error: OTP_CLOSED }, { status: 503 });
+  }
+  const email = normaliseEmail(emailCheck.data);
+  let issued;
+  try {
+    issued = await issueEmailCode(dbOtpDirectory(), email, Date.now(), generateOtp, hashOtp);
+  } catch (error) {
+    console.error(`[otp] could not store a code: ${error instanceof Error ? error.message : "unavailable"}`);
+    return NextResponse.json({ error: "Sign-in storage is not ready. Run the latest database migration." }, { status: 503 });
+  }
+  if (!issued.ok) return NextResponse.json({ error: issued.error }, { status: issued.status });
+  try {
+    await sendEmail(email, "Your Datum sign-in code", `${issued.code} is your Datum code. It expires in 5 minutes.`);
+  } catch (error) {
+    console.error(`[otp] email send failed: ${error instanceof Error ? error.message : "unavailable"}`);
+    await dbOtpDirectory().remove(email).catch(() => undefined);
+    return NextResponse.json({ error: "The code could not be sent. Try again in a minute." }, { status: 502 });
+  }
+  return NextResponse.json(publicOtpResponse());
 }

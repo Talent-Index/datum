@@ -171,6 +171,8 @@ export function hashOtp(subject: string, code: string): string {
  * never for a deployment holding real money. Each use is logged.
  */
 export function otpTestCodeAccepted(channel: "phone" | "email", code: string): boolean {
+  if (process.env.NODE_ENV === "production") return false;
+  if (process.env.EMAIL_OTP_DEV_LOG !== "1") return false;
   const demo = process.env.OTP_TEST_CODE;
   if (!demo || demo.length !== 6) return false;
   const providerConfigured = channel === "email" ? !!process.env.RESEND_API_KEY : !!process.env.AT_API_KEY;

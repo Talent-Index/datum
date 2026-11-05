@@ -129,18 +129,26 @@ export async function creditPayment(paymentId: number, receipt?: string): Promis
 type PendingPayment = typeof schema.pendingPayments.$inferSelect;
 
 /**
- * A platform fee, confirmed by Safaricom, marks the account paid and proves
- * the number it came from. Nothing goes to escrow; the record goes on chain.
+ * A platform fee, confirmed by Safaricom, marks that account paid.
+ * Nothing is minted in the construction escrow, and the handset is not
+ * treated as verified: the number was only where the prompt was sent.
  */
 async function creditFee(paymentId: number, payment: PendingPayment, receipt?: string): Promise<CreditOutcome> {
   const database = db();
   if (!payment.accountId) return { status: "failed", reason: "fee has no account" };
   const [account] = await database.select().from(schema.accounts).where(eq(schema.accounts.id, payment.accountId));
   if (!account) return { status: "failed", reason: `account ${payment.accountId} not found` };
+  if (receipt) {
+    const [prior] = await database
+      .select({ id: schema.pendingPayments.id })
+      .from(schema.pendingPayments)
+      .where(eq(schema.pendingPayments.mpesaReceipt, receipt));
+    if (prior && prior.id !== paymentId) return { status: "skipped", reason: "receipt already recorded" };
+  }
 
   await database
     .update(schema.accounts)
-    .set({ feeStatus: "paid", feePaidAt: new Date(), phoneVerified: true, phone: normaliseMsisdn(payment.phone) })
+    .set({ feeStatus: "paid", feePaidAt: new Date() })
     .where(eq(schema.accounts.id, account.id));
   await database
     .update(schema.pendingPayments)

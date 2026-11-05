@@ -32,13 +32,10 @@ describe("returning sign-in", () => {
 
 describe("sign-in copy", () => {
   it("does not reveal a code or mention a demo code", () => {
-    for (const channel of ["phone", "email"] as const) {
-      for (const delivered of [true, false]) {
-        const message = otpDeliveryMessage(channel, delivered);
-        expect(message).not.toMatch(/\d{6}/);
-        expect(message.toLowerCase()).not.toContain("demo");
-      }
-    }
+    const message = otpDeliveryMessage();
+    expect(message).not.toMatch(/\d{6}/);
+    expect(message.toLowerCase()).not.toContain("demo");
+    expect(message.toLowerCase()).not.toContain("log");
   });
 });
 

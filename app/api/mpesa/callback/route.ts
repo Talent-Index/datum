@@ -1,8 +1,10 @@
 import { NextResponse } from "next/server";
 import { and, eq } from "drizzle-orm";
 
-import { callbackSchema } from "@/lib/daraja";
+import { callbackSchema, stkQuery } from "@/lib/daraja";
 import { db, schema } from "@/lib/db";
+import { dbFeeDirectory } from "@/lib/onboarding/db";
+import { applyFeeCallback } from "@/lib/onboarding/fee";
 import { creditPayment } from "@/lib/payments";
 
 /**
@@ -36,6 +38,22 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     return ack;
   }
+  if (payment.purpose === "fee") {
+    const receipt = callback.CallbackMetadata?.Item.find((item) => item.Name === "MpesaReceiptNumber")?.Value;
+    await applyFeeCallback(
+      dbFeeDirectory(),
+      {
+        checkoutRequestId: callback.CheckoutRequestID,
+        resultCode: callback.ResultCode,
+        resultDesc: callback.ResultDesc,
+        receipt: typeof receipt === "string" ? receipt : null,
+      },
+      Date.now(),
+      (id) => stkQuery(id),
+    );
+    return ack;
+  }
+
   if (payment.status !== "pending") {
     return ack; // retry of an already-processed delivery
   }

@@ -20,7 +20,6 @@ const CHECKS: Array<{ key: string; title: string; pass: string }> = [
 const PRESETS = [50_000, 100_000, 250_000];
 
 type Tab = "home" | "pay" | "evidence";
-type SignInMethod = "phone" | "email";
 
 interface MineBuild {
   id: string;
@@ -39,9 +38,9 @@ interface PaymentRow {
 }
 
 /**
- * The buyer's and sender's page: prove a number, commit, pay by M-Pesa,
- * and approve a milestone. Wallet addresses and transaction hashes stay in
- * the record drawer.
+ * The buyer's and sender's page: sign in by email, commit, pay by M-Pesa
+ * from the saved number, and approve a milestone. Wallet addresses and
+ * transaction hashes stay in the record drawer.
  */
 export default function Buy() {
   const [projectId, setProjectId] = useState<string | null>(null);
@@ -51,7 +50,6 @@ export default function Buy() {
   const { open } = useRecord();
   const [tab, setTab] = useState<Tab>("home");
   const [phone, setPhone] = useState("");
-  const [method, setMethod] = useState<SignInMethod>("phone");
   const [code, setCode] = useState("");
   const [mine, setMine] = useState<MineBuild[] | null>(null);
   const [payments, setPayments] = useState<PaymentRow[]>([]);
@@ -142,18 +140,18 @@ export default function Buy() {
 
   const sendCode = () =>
     act("otp", async () => {
-      const result = await call("/api/auth/otp", method === "email" ? { email: phone.trim() } : { phone: phone.trim() });
+      const result = await call("/api/auth/otp", { email: phone.trim() });
       setCodeSent(true);
-      showToast(String(result.message ?? "Code sent. Check your phone."));
+      showToast(String(result.message ?? "Check your email."));
     });
 
   const verifyCode = () =>
     act("verify", async () => {
-      await call("/api/auth/verify", method === "email" ? { email: phone.trim(), code: code.trim() } : { phone: phone.trim(), code: code.trim() });
+      await call("/api/auth/verify", { email: phone.trim(), code: code.trim() });
       setCode("");
       setCodeSent(false);
       await refreshSession();
-      showToast("Number verified. You can register and pay from here.");
+      showToast("Signed in. Your builds and the number you pay from are on this email.");
     });
 
   const signOut = () =>
@@ -231,16 +229,12 @@ export default function Buy() {
         {session && !session.sender && (
           <section className="box" style={{ marginTop: 12 }}>
             <div className="bh"><h2>Sign in</h2><span className="eyebrow">Code</span></div>
-            <p>Pay from the M-Pesa number you prove. A code by SMS or email signs you in for 30 days, and the next visit opens the builds on that number. No wallet and no password.</p>
-            <div className="btns" style={{ marginBottom: 8 }}>
-              <button type="button" className={method === "phone" ? "" : "ghost"} onClick={() => { setMethod("phone"); setCodeSent(false); }}>M-Pesa number</button>
-              <button type="button" className={method === "email" ? "" : "ghost"} onClick={() => { setMethod("email"); setCodeSent(false); }}>Email</button>
-            </div>
-            <label htmlFor="phone">{method === "email" ? "Email address" : "M-Pesa number"}</label>
-            <input id="phone" inputMode={method === "email" ? "email" : "tel"} autoComplete={method === "email" ? "email" : "tel"} placeholder={method === "email" ? "you@example.com" : "07XX XXX XXX"} value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
+            <p>Sign in with your email. A code signs you in for 30 days and brings back this account, the M-Pesa number saved on it, and the builds it has paid into. The number is where prompts are sent. It is not the login.</p>
+            <label htmlFor="phone">Email address</label>
+            <input id="phone" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
             {codeSent && (
               <>
-                <label htmlFor="code">{method === "email" ? "Code from email" : "Code from SMS"}</label>
+                <label htmlFor="code">Code from email</label>
                 <input id="code" inputMode="numeric" autoComplete="one-time-code" aria-label="One-time code" value={code} onChange={(e) => setCode(e.target.value)} />
               </>
             )}
@@ -254,8 +248,15 @@ export default function Buy() {
                 <button type="button" onClick={sendCode} disabled={busy !== null || !phone.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
               )}
             </div>
-            <p className="hint">Codes expire after five minutes. Ask for another after a minute.</p>
-            {session?.google ? <a className="btn btn-ghost" href="/api/auth/google/start">Continue with Google</a> : null}
+            <p className="hint">Codes expire after five minutes. Ask for another after a minute. A new account finishes on the account page, including the M-Pesa number, before any prompt is sent.</p>
+          </section>
+        )}
+
+        {session?.sender && !session.account && (
+          <section className="box" style={{ marginTop: 12 }}>
+            <div className="bh"><h2>Finish your account</h2></div>
+            <p>Save your name and the M-Pesa number you pay from. Nothing is sent to that number until you press a pay button.</p>
+            <Link className="btn btn-primary" href="/account">Continue</Link>
           </section>
         )}
 

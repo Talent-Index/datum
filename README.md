@@ -222,13 +222,13 @@ If the chain transaction fails, the failure is recorded against the payment row 
 
 There are two kinds of session. Both are HMAC-signed cookies under `SESSION_SECRET`.
 
-A buyer or sender proves their M-Pesa number with a six-digit code: `/api/auth/otp` sends it and `/api/auth/verify` checks it. Codes live five minutes, allow five attempts, and are issued at most once a minute per number. Registering, paying and approving a milestone then act for that number only; no request body carries a phone.
+Sign-in is an email code. `/api/auth/otp` sends it and `/api/auth/verify` checks it. Codes are six random digits, stored hashed, live five minutes, allow five wrong attempts, and can be requested at most once a minute and five times an hour. The response does not say whether the address already has an account, and it never contains the code.
 
-Codes go out through Africa's Talking when `AT_USERNAME` and `AT_API_KEY` are set (`AT_SENDER_ID` is optional). Without them the code is written to the server log, which is the stub for a pilot that has not switched SMS on. The API never returns the code, and it never tells the person to type a fixed demo code.
+Mail goes through Resend when `RESEND_API_KEY` and `EMAIL_FROM` are set. If either is missing in production the request fails closed: nothing is sent and the code is not logged. A server log exists only when `NODE_ENV` is not `production` and `EMAIL_OTP_DEV_LOG=1`. `OTP_TEST_CODE` is ignored in production.
 
-Email uses the same six-digit code through Resend (`RESEND_API_KEY`, `EMAIL_FROM`). Google sign-in is Auth.js: set `AUTH_GOOGLE_ID`, `AUTH_GOOGLE_SECRET` and `AUTH_SECRET` (the last can match `SESSION_SECRET`) and add `{origin}/api/auth/callback/google` in the Google console. The button stays hidden until those are set. A Google email that is already on an account with a phone signs in as that phone, so the wallet does not move.
+The M-Pesa number is saved after sign-in and is only the number prompts are sent to. It does not sign anyone in and it does not join two accounts. A returning email gets the same account, the saved number, and the fee and build history on that account.
 
-The cookie lasts 30 days. Builds already tied to the phone (as buyer or sender) and builds the person has opened come back on the next visit. That memory is in `identity_links` and `identity_touches`, added by `npm run db:migrate`. Sign-in still works before the migration; the visit is simply not stored.
+The cookie lasts 30 days. Visits are remembered in `identity_touches` against the email. Run `npm run db:migrate` so `otp_events` exists; without it, requesting a code returns 503 rather than skipping the limit.
 
 `npm run seed` prints the projects already in Postgres. It does not insert balances. An empty database gets its first escrow from the register, as an operator, which deploys the contract. `/api/board` then lists every build without `?project=`.
 
@@ -236,13 +236,11 @@ An operator unlocks the register with `OPERATOR_SECRET`, either as `Authorizatio
 
 Reads are open: `/api/state`, `/api/board`, `/api/projects`, `/api/listings`, `/api/trustees`, `/api/health` and `/api/activities?address=`.
 
-`OTP_TEST_CODE`, if set, is still accepted on a channel with no provider. It is a back door for a scripted demo and must stay unset on the pilot. The UI does not mention it.
-
 ## Accounts, roles and the registry
 
-Buyers sign in with the M-Pesa number they pay from and give their name and email when they commit, which opens an account on that number if they had none, so the commitment is a person with an address from the first shilling. An email given that way is contact detail until a code sent to it is typed back on the account page. Sellers, developers, companies and senders abroad sign in with an email address, then add the number they will pay from. Either way the code is one-time, and the subject that was proven is the identity: an Avalanche address is derived from it with the master seed, the same way buyer wallets always were, and registered with the role in the `DatumRegistry` contract. The address is on chain; the email, number and name are not.
+Everyone signs in with an email. The account is then opened with a name, a role and the M-Pesa number prompts should use. The Avalanche address is derived from the email. The address is on chain; the email, number and name are not.
 
-Sellers, developers, companies and senders pay a one-off fee (`LISTING_FEE_KES`, KES 200 by default) by M-Pesa prompt to the number they added. The confirmation comes through the same callback as a deposit, marks the account paid, and proves the number, because only that handset could have approved the prompt. Until it is paid, a seller cannot post and a sender cannot commit.
+Sellers, developers, companies and senders pay a one-off platform fee (`LISTING_FEE_KES`, KES 200 by default) by an M-Pesa prompt to the number they saved. The button is `Pay KES 200 with M-Pesa` and nothing is sent on page load. The fee is not a signup charge and it does not mint a claim in the construction escrow. Safaricom's own query is what marks it paid. A cancelled, timed-out or failed prompt can be sent again; a second prompt is not sent while one is still open, and a receipt cannot be applied twice. Until it is paid, a seller cannot post and a sender cannot commit. Buyers are not charged this fee. Construction deposits stay on the escrow path and still use `depositFor` after Safaricom confirms.
 
 A listing is posted with photographs, stored downscaled in Postgres because a serverless function has no disk, and waits as "awaiting verification". Datum staff reach out to the owner at the email and number on the account, verify them and what they posted, and approve from the review desk. Approval records the identity verdict on chain against the listing's content hash, posts the listing to the registry, which refuses it unless that verdict is there, deploys the escrow with the listing's milestones, the owner's address as payee and the assigned trustee as attester 1, marks the listing live, and opens it to buyers. The self-service identity upload still exists as an API but the product path is staff verification.
 

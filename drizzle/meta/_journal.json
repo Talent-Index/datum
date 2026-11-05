@@ -64,6 +64,13 @@
       "when": 1793862297885,
       "tag": "0008_identity_links",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794000000000,
+      "tag": "0009_email_signin",
+      "breakpoints": true
     }
   ]
 }

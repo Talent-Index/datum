@@ -1,6 +1,6 @@
 import { and, eq, or } from "drizzle-orm";
 
-import { accountByEmail } from "./accounts";
+import { accountByEmail, sessionOwnsAccount } from "./accounts";
 import { normaliseMsisdn } from "./chain";
 import { db, schema } from "./db";
 import { normaliseEmail } from "./email";
@@ -8,10 +8,9 @@ import { listProjects } from "./project";
 import type { SenderSession } from "./auth";
 
 /**
- * Phone, email and Google are ways back to the same person. The phone wins
- * when it is already known, because payments and the managed wallet follow
- * the number. A missing table must not block sign-in: the migration can
- * land after the code.
+ * Visits are remembered against the email that signed in. A phone number
+ * saved for M-Pesa is not a login and is not written here as a way to join
+ * two accounts. A missing table must not block sign-in.
  */
 
 export interface BuildTie {
@@ -96,17 +95,19 @@ export async function rememberTouch(subject: string | null | undefined, projectI
   }
 }
 
-/** Builds this session already belongs to, from the ledger and from visits. */
+/** Builds this session already belongs to, from its own account and its visits. */
 export async function buildsForSession(session: SenderSession): Promise<BuildTie[]> {
   const projects = await listProjects();
-  const phone = session.phone;
+  const byEmail = session.email ? await accountByEmail(session.email) : null;
+  const owned = byEmail && sessionOwnsAccount(session, byEmail) ? byEmail : null;
+  const phone = owned?.phone ? normaliseMsisdn(owned.phone) : session.phone && session.subject === session.phone ? normaliseMsisdn(session.phone) : null;
   const database = db();
   const buyerIds = phone
     ? (await database.select({ projectId: schema.buyers.projectId }).from(schema.buyers).where(eq(schema.buyers.phone, phone))).map((row) => row.projectId)
     : [];
   const senderIds = projects.filter((project) => phone && project.senderPhone === phone).map((project) => project.id);
   let touched: string[] = [];
-  const subject = phone ?? session.email;
+  const subject = session.email ?? (session.subject === session.phone ? session.phone : null);
   if (subject) {
     try {
       touched = (
@@ -129,30 +130,21 @@ export async function buildsForSession(session: SenderSession): Promise<BuildTie
 }
 
 /**
- * Google has just proved an email. If that email is already on an account
- * with a phone, the session stays on the phone so the wallet does not move.
+ * Google has proved an inbox. The Datum session stays on that email.
+ * A phone saved for M-Pesa is not copied into the session, and an unverified
+ * contact email is not marked proven unless it is already this account's email.
  */
-export async function linkGoogleIdentity(input: { email: string; googleSub: string | null; name: string | null }): Promise<{ phone: string | null; email: string }> {
+export async function linkGoogleIdentity(input: { email: string; googleSub: string | null; name: string | null }): Promise<{ email: string }> {
   const email = normaliseEmail(input.email);
   const account = await accountByEmail(email);
-  let phone = account?.phone ?? null;
-  if (account && !account.emailVerified) {
+  if (account && account.email === email && !account.emailVerified) {
     await db().update(schema.accounts).set({ emailVerified: true }).where(eq(schema.accounts.id, account.id));
   }
-  if (!phone) {
-    try {
-      const [link] = await db().select().from(schema.identityLinks).where(eq(schema.identityLinks.email, email));
-      phone = link?.phone ?? null;
-    } catch {
-      phone = null;
-    }
-  }
   await rememberIdentity({
-    phone,
     email,
     googleSub: input.googleSub,
     accountId: account?.id ?? null,
     displayName: input.name,
   });
-  return { phone, email };
+  return { email };
 }
