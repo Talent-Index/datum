@@ -299,6 +299,9 @@ describe("email delivery", () => {
       port: 465,
       secure: true,
       auth: { user: "sender@gmail.com", pass: "app-password-value" },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
     });
     expect(mailer.sendMail).toHaveBeenCalledWith({
       from: "Datum <sender@gmail.com>",
@@ -313,10 +316,108 @@ describe("email delivery", () => {
     info.mockRestore();
   });
 
-  it("uses EMAIL_FROM when it is set", () => {
+  it("keeps EMAIL_FROM only when it is the Gmail account", () => {
     vi.stubEnv("GMAIL_USER", "sender@gmail.com");
     vi.stubEnv("EMAIL_FROM", "Datum <hello@example.com>");
-    expect(gmailFrom()).toBe("Datum <hello@example.com>");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    expect(gmailFrom()).toBe("Datum <sender@gmail.com>");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("EMAIL_FROM address differs from GMAIL_USER"));
+    warn.mockClear();
+    vi.stubEnv("EMAIL_FROM", "Datum <sender@gmail.com>");
+    expect(gmailFrom()).toBe("Datum <sender@gmail.com>");
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("trims the Gmail user and strips whitespace from the app password", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GMAIL_USER", "  sender@gmail.com \n");
+    vi.stubEnv("GMAIL_APP_PASSWORD", " abcd efgh\tijkl\nmnop ");
+    vi.stubEnv("RESEND_API_KEY", "");
+    vi.stubEnv("EMAIL_FROM", "");
+    const result = await sendEmail("ada@example.com", "subject", "text", "<p>text</p>");
+    expect(result).toEqual({ delivered: true, via: "gmail" });
+    expect(mailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: "sender@gmail.com", pass: "abcdefghijklmnop" },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
+    }));
+    expect(mailer.sendMail).toHaveBeenCalledWith(expect.objectContaining({ from: "Datum <sender@gmail.com>" }));
+  });
+
+  it("retries a connection timeout once on port 587 and does not retry EAUTH", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "abcdefghijklmnop");
+    vi.stubEnv("RESEND_API_KEY", "");
+    vi.stubEnv("EMAIL_FROM", "");
+    mailer.sendMail.mockRejectedValueOnce(Object.assign(new Error("connect timeout"), { code: "ETIMEDOUT", response: "timed out abcdefghijklmnop" }));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await sendEmail("ada@example.com", "subject", "body", "<p>body</p>");
+    expect(result).toEqual({ delivered: true, via: "gmail" });
+    expect(mailer.createTransport).toHaveBeenNthCalledWith(1, expect.objectContaining({ port: 465, secure: true }));
+    expect(mailer.createTransport).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      host: "smtp.gmail.com",
+      port: 587,
+      secure: false,
+      requireTLS: true,
+      auth: { user: "sender@gmail.com", pass: "abcdefghijklmnop" },
+    }));
+    expect(mailer.sendMail).toHaveBeenCalledTimes(2);
+    const retryLog = error.mock.calls.flat().join(" ");
+    expect(retryLog).toContain("retrying on 587");
+    expect(retryLog).toContain("code=ETIMEDOUT");
+    expect(retryLog).not.toContain("abcdefghijklmnop");
+    error.mockClear();
+
+    mailer.createTransport.mockClear();
+    mailer.sendMail.mockReset();
+    mailer.sendMail.mockRejectedValue(Object.assign(new Error("auth failed"), {
+      code: "EAUTH",
+      responseCode: 535,
+      command: "AUTH",
+      response: "535 rejected",
+    }));
+    await expect(sendEmail("ada@example.com", "subject", "body", "<p>body</p>")).rejects.toThrow("Email send failed");
+    expect(mailer.createTransport).toHaveBeenCalledTimes(1);
+    expect(mailer.createTransport).toHaveBeenCalledWith(expect.objectContaining({ port: 465, secure: true }));
+    error.mockRestore();
+  });
+
+  it("logs a redacted SMTP diagnostic and never the password or the code", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop");
+    vi.stubEnv("RESEND_API_KEY", "");
+    vi.stubEnv("EMAIL_FROM", "");
+    mailer.sendMail.mockRejectedValueOnce({
+      code: "EAUTH",
+      responseCode: 535,
+      command: "AUTH PLAIN",
+      response: "535-5.7.8 abcd efgh ijkl mnop and abcdefghijklmnop rejected",
+    });
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(sendEmail("ada@example.com", "Your Datum sign-in code: 042013", "042013", "<p>042013</p>")).rejects.toThrow("Email send failed");
+    expect(mailer.createTransport).toHaveBeenCalledTimes(1);
+    const logged = error.mock.calls.flat().join(" ");
+    expect(logged).toContain("[email] gmail send failed");
+    expect(logged).toContain("code=EAUTH");
+    expect(logged).toContain("responseCode=535");
+    expect(logged).toContain("command=AUTH PLAIN");
+    expect(logged).toContain("userPresent=true");
+    expect(logged).toContain("userLooksLikeEmail=true");
+    expect(logged).toContain("appPasswordLength=16");
+    expect(logged).toContain("appPasswordHadSpaces=true");
+    expect(logged).toContain("port=465");
+    expect(logged).toContain("[redacted]");
+    expect(logged).not.toContain("abcdefghijklmnop");
+    expect(logged).not.toContain("abcd efgh");
+    expect(logged).not.toContain("042013");
+    error.mockRestore();
   });
 
   it("uses Resend only when Gmail is not configured", async () => {
