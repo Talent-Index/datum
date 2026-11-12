@@ -224,7 +224,9 @@ There are two kinds of session. Both are HMAC-signed cookies under `SESSION_SECR
 
 Sign-in is an email code. `/api/auth/otp` sends it and `/api/auth/verify` checks it. Codes are six random digits, stored hashed, live five minutes, allow five wrong attempts, and can be requested at most once a minute and five times an hour. The response does not say whether the address already has an account, and it never contains the code.
 
-Mail goes through Resend when `RESEND_API_KEY` and `EMAIL_FROM` are set. If either is missing in production the request fails closed: nothing is sent and the code is not logged. A server log exists only when `NODE_ENV` is not `production` and `EMAIL_OTP_DEV_LOG=1`. `OTP_TEST_CODE` is ignored in production.
+Mail goes out through Gmail SMTP (`smtp.gmail.com`, port 465) when `GMAIL_USER` and `GMAIL_APP_PASSWORD` are set. The From header is `Datum <GMAIL_USER>` unless `EMAIL_FROM` is set. Resend is used only when Gmail is not set and `RESEND_API_KEY` is set (`EMAIL_FROM` is the Resend sender). If neither is configured, `/api/auth/otp` returns 503 and names `GMAIL_USER` and `GMAIL_APP_PASSWORD`. The code and the app password are never written to the log in production. A server log exists only when `NODE_ENV` is not `production` and `EMAIL_OTP_DEV_LOG=1`. `OTP_TEST_CODE` is ignored in production.
+
+Create the app password on the Gmail account that will send the codes. Turn on 2-Step Verification, open [https://myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords), and create an app password. Put that 16-character value in `GMAIL_APP_PASSWORD` and the mailbox address in `GMAIL_USER`. On Vercel, set both for the deployment. A consumer Gmail account can send to roughly 500 recipients a day, so a pilot that grows past that needs another mailbox or a transactional provider.
 
 The M-Pesa number is saved after sign-in and is only the number prompts are sent to. It does not sign anyone in and it does not join two accounts. A returning email gets the same account, the saved number, and the fee and build history on that account.
 

@@ -3,7 +3,7 @@ import { z } from "zod";
 
 import { accountByEmail, currentAccount } from "@/lib/accounts";
 import { generateOtp, hashOtp } from "@/lib/auth";
-import { emailTransport, normaliseEmail, sendEmail } from "@/lib/email";
+import { confirmCodeMail, emailTransport, normaliseEmail, sendEmail } from "@/lib/email";
 import { dbOtpDirectory } from "@/lib/onboarding/db";
 import { issueEmailCode, publicOtpResponse } from "@/lib/onboarding/email-code";
 import { OTP_CLOSED } from "@/lib/otp-message";
@@ -34,7 +34,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   if (!issued.ok) return NextResponse.json({ error: issued.error }, { status: issued.status });
   try {
-    await sendEmail(email, "Confirm your email for Datum", `${issued.code} confirms this email on your Datum account. It expires in 5 minutes.`);
+    const mail = confirmCodeMail(issued.code);
+    await sendEmail(email, mail.subject, mail.text, mail.html);
   } catch (error) {
     console.error(`[email] send failed: ${error instanceof Error ? error.message : "unavailable"}`);
     await dbOtpDirectory().remove(email).catch(() => undefined);

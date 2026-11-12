@@ -10,7 +10,7 @@ export const OTP_WAIT = "Wait a minute before asking for another code.";
 
 export const OTP_LIMIT = "Too many attempts. Request a new code later.";
 
-export const OTP_CLOSED = "Email sign-in is not configured on this server.";
+export const OTP_CLOSED = "Email sign-in is not configured. Set GMAIL_USER and GMAIL_APP_PASSWORD.";
 
 export function otpDeliveryMessage(): string {
   return OTP_SENT;

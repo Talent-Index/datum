@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 
 import { generateOtp, hashOtp } from "@/lib/auth";
-import { emailTransport, normaliseEmail, sendEmail } from "@/lib/email";
+import { emailTransport, normaliseEmail, sendEmail, signInCodeMail } from "@/lib/email";
 import { issueEmailCode, publicOtpResponse } from "@/lib/onboarding/email-code";
 import { dbOtpDirectory } from "@/lib/onboarding/db";
 import { OTP_CLOSED } from "@/lib/otp-message";
@@ -39,7 +39,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
   if (!issued.ok) return NextResponse.json({ error: issued.error }, { status: issued.status });
   try {
-    await sendEmail(email, "Your Datum sign-in code", `${issued.code} is your Datum code. It expires in 5 minutes.`);
+    const mail = signInCodeMail(issued.code);
+    await sendEmail(email, mail.subject, mail.text, mail.html);
   } catch (error) {
     console.error(`[otp] email send failed: ${error instanceof Error ? error.message : "unavailable"}`);
     await dbOtpDirectory().remove(email).catch(() => undefined);
