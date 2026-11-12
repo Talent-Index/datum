@@ -7,6 +7,8 @@ import { issueEmailCode, publicOtpResponse } from "@/lib/onboarding/email-code";
 import { dbOtpDirectory } from "@/lib/onboarding/db";
 import { OTP_CLOSED } from "@/lib/otp-message";
 
+export const runtime = "nodejs";
+
 /**
  * Email is the only sign-in. A code is emailed when delivery is configured,
  * and the response never contains the code or whether the address is new.

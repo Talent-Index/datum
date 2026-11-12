@@ -8,6 +8,8 @@ import { dbOtpDirectory } from "@/lib/onboarding/db";
 import { issueEmailCode, publicOtpResponse } from "@/lib/onboarding/email-code";
 import { OTP_CLOSED } from "@/lib/otp-message";
 
+export const runtime = "nodejs";
+
 const bodySchema = z.object({ email: z.string().trim().email("Enter a valid email address") });
 
 /**
