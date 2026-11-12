@@ -249,6 +249,7 @@ export default function Buy() {
               )}
             </div>
             <p className="hint">Codes expire after five minutes. Ask for another after a minute. A new account finishes on the account page, including the M-Pesa number, before any prompt is sent.</p>
+            {codeSent ? <p className="hint">Can&apos;t find it? Check your spam or Promotions folder.</p> : null}
           </section>
         )}
 

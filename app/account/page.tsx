@@ -210,6 +210,7 @@ export default function AccountPage() {
                   <button onClick={sendCode} disabled={busy !== null || !identity.trim()}>{busy === "otp" ? "Sending…" : "Send me a code"}</button>
                 )}
               </div>
+              {codeSent ? <p className="hint">Can&apos;t find it? Check your spam or Promotions folder.</p> : null}
             </div>
           </section>
           <section className="panel">
@@ -312,6 +313,7 @@ export default function AccountPage() {
                       <button className="ghost" onClick={sendEmailCode} disabled={busy !== null || !newEmail.trim()}>{busy === "email" ? "Sending…" : "Send me a code"}</button>
                     )}
                   </div>
+                  {emailCodeSent ? <p className="hint">Can&apos;t find it? Check your spam or Promotions folder.</p> : null}
                 </div>
               </section>
             )}

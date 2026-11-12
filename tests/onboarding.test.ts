@@ -3,7 +3,18 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Account } from "@/lib/accounts";
 import { paymentDestination, sessionOwnsAccount } from "@/lib/accounts";
 import type { SenderSession } from "@/lib/auth";
-import { emailTransport, sendEmail } from "@/lib/email";
+import { emailTransport, gmailFrom, sendEmail, signInCodeMail } from "@/lib/email";
+
+const mailer = vi.hoisted(() => {
+  const sendMail = vi.fn(async () => ({ messageId: "test" }));
+  const createTransport = vi.fn(() => ({ sendMail }));
+  return { sendMail, createTransport };
+});
+
+vi.mock("nodemailer", () => ({
+  default: { createTransport: mailer.createTransport },
+  createTransport: mailer.createTransport,
+}));
 import { normalizePhone } from "@/lib/daraja";
 import {
   CODE_TTL_MS,
@@ -22,7 +33,7 @@ import {
   requestPlatformFee,
   type FeeAccount,
 } from "@/lib/onboarding/fee";
-import { OTP_INVALID, OTP_LIMIT } from "@/lib/otp-message";
+import { OTP_CLOSED, OTP_INVALID, OTP_LIMIT } from "@/lib/otp-message";
 
 const hash = (subject: string, code: string) => `${subject}:${code}`;
 const email = "ada@example.com";
@@ -253,28 +264,120 @@ describe("platform fee prompt", () => {
 describe("email delivery", () => {
   afterEach(() => {
     vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+    mailer.sendMail.mockReset();
+    mailer.sendMail.mockResolvedValue({ messageId: "test" });
+    mailer.createTransport.mockClear();
   });
 
-  it("fails closed in production and does not log the code", async () => {
-    vi.stubEnv("NODE_ENV", "production");
+  function clearProviders(): void {
+    vi.stubEnv("GMAIL_USER", "");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "");
     vi.stubEnv("RESEND_API_KEY", "");
     vi.stubEnv("EMAIL_FROM", "");
+  }
+
+  it("prefers Gmail over Resend and does not open a real connection", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "app-password-value");
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "");
+    expect(emailTransport()).toBe("gmail");
+    const mail = signInCodeMail("042013");
+    expect(mail.subject).toBe("Your Datum sign-in code: 042013");
+    expect(mail.text).toContain("five minutes");
+    expect(mail.html).toContain("042013");
+    expect(mail.html).toContain("five minutes");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await sendEmail("ada@example.com", mail.subject, mail.text, mail.html);
+    expect(result).toEqual({ delivered: true, via: "gmail" });
+    expect(mailer.createTransport).toHaveBeenCalledWith({
+      host: "smtp.gmail.com",
+      port: 465,
+      secure: true,
+      auth: { user: "sender@gmail.com", pass: "app-password-value" },
+    });
+    expect(mailer.sendMail).toHaveBeenCalledWith({
+      from: "Datum <sender@gmail.com>",
+      to: "ada@example.com",
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
+    });
+    expect(gmailFrom()).toBe("Datum <sender@gmail.com>");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+    info.mockRestore();
+  });
+
+  it("uses EMAIL_FROM when it is set", () => {
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("EMAIL_FROM", "Datum <hello@example.com>");
+    expect(gmailFrom()).toBe("Datum <hello@example.com>");
+  });
+
+  it("uses Resend only when Gmail is not configured", async () => {
+    clearProviders();
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "Datum <hello@example.com>");
+    expect(emailTransport()).toBe("resend");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await sendEmail("ada@example.com", "Your Datum sign-in code: 042013", "plain", "<p>html</p>");
+    expect(result).toEqual({ delivered: true, via: "resend" });
+    expect(mailer.createTransport).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const call = fetchMock.mock.calls[0]!;
+    expect(call[0]).toBe("https://api.resend.com/emails");
+    expect(JSON.parse(String(call[1]?.body))).toMatchObject({ from: "Datum <hello@example.com>", to: ["ada@example.com"] });
+  });
+
+  it("fails closed when neither provider is configured and does not log the code", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    clearProviders();
     vi.stubEnv("EMAIL_OTP_DEV_LOG", "1");
     expect(emailTransport()).toBe("closed");
-    const spy = vi.spyOn(console, "info").mockImplementation(() => undefined);
-    const result = await sendEmail("ada@example.com", "Your Datum sign-in code", "042013 is your Datum code.");
+    expect(OTP_CLOSED).toContain("GMAIL_USER");
+    expect(OTP_CLOSED).toContain("GMAIL_APP_PASSWORD");
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await sendEmail("ada@example.com", "Your Datum sign-in code: 042013", "042013 is your Datum code.");
     expect(result).toEqual({ delivered: false, via: "closed" });
-    expect(spy).not.toHaveBeenCalled();
-    spy.mockRestore();
+    expect(mailer.createTransport).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    const logged = [...info.mock.calls, ...error.mock.calls].flat().join(" ");
+    expect(logged).not.toContain("042013");
+    info.mockRestore();
+    error.mockRestore();
+  });
+
+  it("does not log the app password when Gmail rejects the message", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "app-password-value");
+    vi.stubEnv("RESEND_API_KEY", "");
+    mailer.sendMail.mockRejectedValueOnce(new Error("535 app-password-value rejected"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(sendEmail("ada@example.com", "Your Datum sign-in code: 042013", "042013", "<p>042013</p>")).rejects.toThrow("Email send failed");
+    const logged = error.mock.calls.flat().join(" ");
+    expect(logged).not.toContain("app-password-value");
+    expect(logged).not.toContain("042013");
+    error.mockRestore();
   });
 
   it("logs the code only when development delivery is explicitly enabled", async () => {
     vi.stubEnv("NODE_ENV", "test");
-    vi.stubEnv("RESEND_API_KEY", "");
-    vi.stubEnv("EMAIL_FROM", "");
+    clearProviders();
     vi.stubEnv("EMAIL_OTP_DEV_LOG", "");
     expect(emailTransport()).toBe("closed");
     vi.stubEnv("EMAIL_OTP_DEV_LOG", "1");
     expect(emailTransport()).toBe("dev-log");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("EMAIL_OTP_DEV_LOG", "1");
+    expect(emailTransport()).toBe("closed");
   });
 });
