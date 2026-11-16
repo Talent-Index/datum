@@ -1,9 +1,9 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Account } from "@/lib/accounts";
 import { paymentDestination, sessionOwnsAccount } from "@/lib/accounts";
 import type { SenderSession } from "@/lib/auth";
-import { emailTransport, gmailFrom, sendEmail, signInCodeMail } from "@/lib/email";
+import { brevoSenderEmail, emailTransport, gmailFrom, sendEmail, signInCodeMail } from "@/lib/email";
 
 const mailer = vi.hoisted(() => {
   const sendMail = vi.fn(async () => ({ messageId: "test" }));
@@ -262,6 +262,11 @@ describe("platform fee prompt", () => {
 });
 
 describe("email delivery", () => {
+  beforeEach(() => {
+    vi.stubEnv("BREVO_API_KEY", "");
+    vi.stubEnv("BREVO_SENDER_EMAIL", "");
+  });
+
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
@@ -271,6 +276,8 @@ describe("email delivery", () => {
   });
 
   function clearProviders(): void {
+    vi.stubEnv("BREVO_API_KEY", "");
+    vi.stubEnv("BREVO_SENDER_EMAIL", "");
     vi.stubEnv("GMAIL_USER", "");
     vi.stubEnv("GMAIL_APP_PASSWORD", "");
     vi.stubEnv("RESEND_API_KEY", "");
@@ -441,6 +448,7 @@ describe("email delivery", () => {
     clearProviders();
     vi.stubEnv("EMAIL_OTP_DEV_LOG", "1");
     expect(emailTransport()).toBe("closed");
+    expect(OTP_CLOSED).toContain("BREVO_API_KEY");
     expect(OTP_CLOSED).toContain("GMAIL_USER");
     expect(OTP_CLOSED).toContain("GMAIL_APP_PASSWORD");
     const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
@@ -467,6 +475,84 @@ describe("email delivery", () => {
     const logged = error.mock.calls.flat().join(" ");
     expect(logged).not.toContain("app-password-value");
     expect(logged).not.toContain("042013");
+    error.mockRestore();
+  });
+
+  it("prefers Brevo over Gmail and posts the transactional payload", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BREVO_API_KEY", "xkeysib-test-key");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    vi.stubEnv("GMAIL_APP_PASSWORD", "app-password-value");
+    vi.stubEnv("RESEND_API_KEY", "re_test");
+    vi.stubEnv("EMAIL_FROM", "");
+    expect(emailTransport()).toBe("brevo");
+    expect(brevoSenderEmail()).toBe("sender@gmail.com");
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      new Response(JSON.stringify({ messageId: "<abc@smtp-relay.mailin.fr>" }), { status: 201 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const mail = signInCodeMail("042013");
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const result = await sendEmail("ada@example.com", mail.subject, mail.text, mail.html);
+    expect(result).toEqual({ delivered: true, via: "brevo" });
+    expect(mailer.createTransport).not.toHaveBeenCalled();
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const call = fetchMock.mock.calls[0]!;
+    expect(call[0]).toBe("https://api.brevo.com/v3/smtp/email");
+    expect(call[1]?.method).toBe("POST");
+    const headers = call[1]?.headers as Record<string, string>;
+    expect(headers["api-key"]).toBe("xkeysib-test-key");
+    expect(headers["content-type"]).toBe("application/json");
+    expect(JSON.parse(String(call[1]?.body))).toEqual({
+      sender: { name: "Datum", email: "sender@gmail.com" },
+      to: [{ email: "ada@example.com" }],
+      subject: mail.subject,
+      htmlContent: mail.html,
+      textContent: mail.text,
+    });
+    expect(error).not.toHaveBeenCalled();
+    error.mockRestore();
+  });
+
+  it("chooses the Brevo sender from the env, then EMAIL_FROM, then Gmail", () => {
+    vi.stubEnv("BREVO_SENDER_EMAIL", "Datum <verified@gmail.com>");
+    vi.stubEnv("EMAIL_FROM", "Datum <from@example.com>");
+    vi.stubEnv("GMAIL_USER", "sender@gmail.com");
+    expect(brevoSenderEmail()).toBe("verified@gmail.com");
+    vi.stubEnv("BREVO_SENDER_EMAIL", "");
+    expect(brevoSenderEmail()).toBe("from@example.com");
+    vi.stubEnv("EMAIL_FROM", "");
+    expect(brevoSenderEmail()).toBe("sender@gmail.com");
+    vi.stubEnv("GMAIL_USER", "");
+    expect(brevoSenderEmail()).toBe("datum.signin@gmail.com");
+  });
+
+  it("logs a redacted Brevo failure and keeps the 502 error", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("BREVO_API_KEY", "xkeysib-test-key");
+    vi.stubEnv("BREVO_SENDER_EMAIL", "verified@gmail.com");
+    const fetchMock = vi.fn(async () =>
+      new Response(JSON.stringify({ code: "unauthorized", message: "Key not found xkeysib-test-key code 042013" }), { status: 401 }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(sendEmail("ada@example.com", "Your Datum sign-in code: 042013", "042013", "<p>042013</p>")).rejects.toThrow("Email send failed");
+    expect(mailer.createTransport).not.toHaveBeenCalled();
+    const logged = error.mock.calls.flat().join(" ");
+    expect(logged).toContain("[email] brevo send failed status=401 code=unauthorized");
+    expect(logged).toContain('sender=verified@gmail.com');
+    expect(logged).toContain("[redacted]");
+    expect(logged).not.toContain("xkeysib-test-key");
+    expect(logged).not.toContain("042013");
+    error.mockRestore();
+  });
+
+  it("treats a Brevo 201 without a messageId as a failure", async () => {
+    vi.stubEnv("BREVO_API_KEY", "xkeysib-test-key");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 201 })));
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(sendEmail("ada@example.com", "subject", "text", "<p>text</p>")).rejects.toThrow("Email send failed");
+    expect(error.mock.calls.flat().join(" ")).toContain("[email] brevo send failed status=201 code=none");
     error.mockRestore();
   });
 
