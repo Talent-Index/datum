@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AppFooter, AppHeader } from "@/lib/ui/chrome";
+import { GOOGLE_SIGN_IN_NOTE, GoogleSignIn } from "@/lib/ui/google-sign-in";
 import { call, kes, useProject } from "@/lib/ui/project";
 import { RecordAddress, RecordTx } from "@/lib/ui/record";
 import { ActivityFeed, BuildRequestsPanel, ReviewPanels } from "@/lib/ui/review";
@@ -75,6 +76,7 @@ export default function AccountPage() {
   const { toast, busy, showToast, act } = useProject({ projectId: null });
   const [view, setView] = useState<AccountView | null>(null);
   const [wanted, setWanted] = useState<string | null>(null);
+  const [googleNote, setGoogleNote] = useState<{ text: string; err: boolean } | null>(null);
   const [identity, setIdentity] = useState("");
   const [code, setCode] = useState("");
   const [codeSent, setCodeSent] = useState(false);
@@ -89,10 +91,20 @@ export default function AccountPage() {
   });
 
   useEffect(() => {
-    const role = new URLSearchParams(window.location.search).get("role");
-    if (!role) return;
-    setWanted(role);
-    if (["buyer", "sender", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
+    const params = new URLSearchParams(window.location.search);
+    const role = params.get("role");
+    if (role) {
+      setWanted(role);
+      if (["buyer", "sender", "seller", "developer", "company"].includes(role)) setOpen((v) => ({ ...v, role }));
+    }
+    const google = params.get("google");
+    const note = google ? GOOGLE_SIGN_IN_NOTE[google] : undefined;
+    if (note) {
+      setGoogleNote({ text: note, err: google !== "cancelled" });
+      params.delete("google");
+      const query = params.toString();
+      window.history.replaceState({}, "", `${window.location.pathname}${query ? `?${query}` : ""}`);
+    }
   }, []);
 
   const load = useCallback(async () => {
@@ -168,21 +180,23 @@ export default function AccountPage() {
       <div className="page-intro">
         <h1>{account ? account.display_name : "Your account"}</h1>
         <p>
-          {account ? <>Role {account.role}. {identityLine}.</> : "Sign in with your email. You add the M-Pesa number you pay from after the code checks out."}
+          {account ? <>Role {account.role}. {identityLine}.</> : "Sign in with Google, or with your email. You add the M-Pesa number you pay from afterwards."}
           {session ? <> <button type="button" className="linkish" onClick={signOut}>Sign out</button></> : null}
         </p>
       </div>
 
       {toast && <div className={`toast ${toast.err ? "err" : ""}`}>{toast.text}</div>}
+      {googleNote && <div className={`toast ${googleNote.err ? "err" : ""}`} role="alert">{googleNote.text}</div>}
 
       {!session && (
         <div className="cols">
           <section className="panel">
             <h2>
               <span>{wanted ? `Continue as ${wanted === "trustee" ? "a trustee" : wanted === "operator" ? "the operator" : `a ${wanted}`}` : "Sign in"}</span>
-              <span>One-time code</span>
+              <span>Email or Google</span>
             </h2>
             <div className="body">
+              <GoogleSignIn next={wanted ? `/account?role=${encodeURIComponent(wanted)}` : "/account"} enabled={view?.google === true} />
               {wanted === "trustee" ? (
                 <p>Trustees are appointed by the platform. Sign in with the email on that appointment. If you have not been appointed, ask the operator.</p>
               ) : (
