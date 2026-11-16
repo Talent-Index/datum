@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { IconCheck, IconChevron, Logo } from "@/lib/ui/chrome";
+import { GoogleSignIn } from "@/lib/ui/google-sign-in";
 import { ProjectCover } from "@/lib/ui/cover";
 import { compactKes, firstName, initials, kes, maskPhone, nextReleaseKes, previousCumulative, scheduledShare, shortHex } from "@/lib/ui/format";
 import { EXPLORER } from "@/lib/ui/nav";
@@ -228,8 +229,9 @@ export default function Buy() {
 
         {session && !session.sender && (
           <section className="box" style={{ marginTop: 12 }}>
-            <div className="bh"><h2>Sign in</h2><span className="eyebrow">Code</span></div>
-            <p>Sign in with your email. A code signs you in for 30 days and brings back this account, the M-Pesa number saved on it, and the builds it has paid into. The number is where prompts are sent. It is not the login.</p>
+            <div className="bh"><h2>Sign in</h2><span className="eyebrow">Email or Google</span></div>
+            <p>Sign in with Google, or with your email. Either one lasts 30 days and brings back this account, the M-Pesa number saved on it, and the builds it has paid into. The number is where prompts are sent. It is not the login.</p>
+            <GoogleSignIn next={projectId ? `/buy?project=${encodeURIComponent(projectId)}` : "/buy"} enabled={session.google === true} />
             <label htmlFor="phone">Email address</label>
             <input id="phone" type="email" inputMode="email" autoComplete="email" placeholder="you@example.com" value={phone} onChange={(e) => setPhone(e.target.value)} disabled={codeSent} />
             {codeSent && (
