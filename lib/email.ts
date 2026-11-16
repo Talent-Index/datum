@@ -3,19 +3,21 @@ import nodemailer from "nodemailer";
 /**
  * Outbound email for one-time codes.
  *
- * Gmail SMTP is the sender when GMAIL_USER and GMAIL_APP_PASSWORD are set.
- * Resend is used only when those are absent and RESEND_API_KEY is set.
- * With neither, nothing is sent. A local log exists only when NODE_ENV is
- * not production and EMAIL_OTP_DEV_LOG=1. Production never logs the code
- * or the mailbox password.
+ * Brevo's transactional API is the sender when BREVO_API_KEY is set. That
+ * needs no custom domain: the sender is a single verified address. Gmail
+ * SMTP is next, when GMAIL_USER and GMAIL_APP_PASSWORD are set. Resend is
+ * used only when both of those are absent and RESEND_API_KEY is set. With
+ * none of them, nothing is sent. A local log exists only when NODE_ENV is
+ * not production and EMAIL_OTP_DEV_LOG=1. Production never logs the code,
+ * the Brevo key, or the mailbox password.
  *
- * Port 465 is tried first. A connection or timeout failure is retried once
- * on port 587. An authentication failure is not retried. The failure log
- * records SMTP fields and password shape only, with secrets redacted.
+ * Gmail tries port 465 first. A connection or timeout failure is retried
+ * once on port 587. An authentication failure is not retried. Failure logs
+ * record provider fields only, with secrets redacted.
  */
 export interface EmailResult {
   delivered: boolean;
-  via: "gmail" | "resend" | "dev-log" | "closed";
+  via: "brevo" | "gmail" | "resend" | "dev-log" | "closed";
 }
 
 export type EmailTransport = EmailResult["via"];
@@ -28,6 +30,8 @@ export interface OutboundMail {
 
 const SMTP_HOST = "smtp.gmail.com";
 const SMTP_TIMEOUT_MS = 10_000;
+const BREVO_URL = "https://api.brevo.com/v3/smtp/email";
+const DEFAULT_BREVO_SENDER = "datum.signin@gmail.com";
 
 /** Connection and timeout failures. Authentication and envelope errors stay on 465. */
 const CONNECTION_FAILURE_CODES = new Set([
@@ -72,17 +76,42 @@ export function gmailConfigured(): boolean {
   return gmailAccount() !== null && gmailAppPassword() !== null;
 }
 
+export function brevoConfigured(): boolean {
+  return envValue("BREVO_API_KEY") !== null;
+}
+
+/**
+ * Address Brevo sends as. A verified single sender, with no domain required.
+ * BREVO_SENDER_EMAIL, then the address in EMAIL_FROM, then GMAIL_USER,
+ * then the Datum sign-in mailbox.
+ */
+export function brevoSenderEmail(): string {
+  const explicit = rawMailbox(envValue("BREVO_SENDER_EMAIL") ?? "");
+  if (explicit) return explicit;
+  const from = rawMailbox(envValue("EMAIL_FROM") ?? "");
+  if (from) return from;
+  const gmail = gmailAccount();
+  if (gmail) return gmail;
+  return DEFAULT_BREVO_SENDER;
+}
+
 export function emailTransport(): EmailTransport {
+  if (brevoConfigured()) return "brevo";
   if (gmailConfigured()) return "gmail";
   if (envValue("RESEND_API_KEY")) return "resend";
   if (process.env.NODE_ENV !== "production" && process.env.EMAIL_OTP_DEV_LOG === "1") return "dev-log";
   return "closed";
 }
 
-function mailboxAddress(from: string): string | null {
+function rawMailbox(from: string): string | null {
   const angled = from.match(/<([^>]+)>/);
-  const address = (angled?.[1] ?? from).trim().toLowerCase();
+  const address = (angled?.[1] ?? from).trim();
   return address.includes("@") ? address : null;
+}
+
+function mailboxAddress(from: string): string | null {
+  const address = rawMailbox(from);
+  return address ? address.toLowerCase() : null;
 }
 
 /**
@@ -215,12 +244,60 @@ async function deliverGmail(
   await transporter.sendMail(message);
 }
 
+async function deliverBrevo(to: string, subject: string, text: string, html?: string): Promise<void> {
+  const apiKey = envValue("BREVO_API_KEY");
+  const sender = brevoSenderEmail();
+  if (!apiKey) throw new Error("Email send failed");
+  const secrets = [apiKey, subject, text, html ?? ""];
+  const code = subject.match(/\b(\d{6})\b/)?.[1];
+  if (code) secrets.push(code);
+  let response: Response;
+  try {
+    response = await fetch(BREVO_URL, {
+      method: "POST",
+      headers: { "api-key": apiKey, "content-type": "application/json" },
+      body: JSON.stringify({
+        sender: { name: "Datum", email: sender },
+        to: [{ email: to }],
+        subject,
+        htmlContent: html ?? text,
+        textContent: text,
+      }),
+    });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "request failed";
+    console.error(`[email] brevo send failed status=none code=none message=${JSON.stringify(redactSecrets(detail, secrets))} sender=${sender}`);
+    throw new Error("Email send failed");
+  }
+  const bodyText = await response.text();
+  let parsed: { messageId?: unknown; code?: unknown; message?: unknown } = {};
+  if (bodyText) {
+    try {
+      parsed = JSON.parse(bodyText) as { messageId?: unknown; code?: unknown; message?: unknown };
+    } catch {
+      parsed = {};
+    }
+  }
+  const messageId = typeof parsed.messageId === "string" ? parsed.messageId : "";
+  if (response.status === 201 && messageId) return;
+  const failureCode = typeof parsed.code === "string" && parsed.code ? parsed.code : "none";
+  const failureMessage = typeof parsed.message === "string" && parsed.message ? parsed.message : bodyText.slice(0, 300);
+  console.error(
+    `[email] brevo send failed status=${response.status} code=${failureCode} message=${JSON.stringify(redactSecrets(failureMessage, secrets))} sender=${sender}`,
+  );
+  throw new Error("Email send failed");
+}
+
 export async function sendEmail(to: string, subject: string, text: string, html?: string): Promise<EmailResult> {
   const via = emailTransport();
   if (via === "closed") return { delivered: false, via };
   if (via === "dev-log") {
     console.info(`[email:dev] to ${to}: ${subject} :: ${text}`);
     return { delivered: false, via };
+  }
+  if (via === "brevo") {
+    await deliverBrevo(to, subject, text, html);
+    return { delivered: true, via: "brevo" };
   }
   if (via === "gmail") {
     const user = gmailAccount();
